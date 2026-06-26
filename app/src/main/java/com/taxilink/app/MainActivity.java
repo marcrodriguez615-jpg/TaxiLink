@@ -252,6 +252,9 @@ public class MainActivity extends android.app.Activity {
         Button refresh = button("Comprobar ahora", TEAL, Color.WHITE);
         refresh.setOnClickListener(v -> checkApproval(requestId));
         card.addView(refresh, matchHMT(54, 18));
+        Button logout = button("Cerrar sesión", DANGER, Color.WHITE);
+        logout.setOnClickListener(v -> { session.logout(); showStartScreen(); });
+        card.addView(logout, matchHMT(54, 12));
         root.addView(card, cardLp());
         setContentView(scroll(root));
         handler.postDelayed(new Runnable() {
@@ -360,6 +363,11 @@ public class MainActivity extends android.app.Activity {
         root.addView(ownerAction("👑", "Cambiar contraseña propietario", "Actualiza la clave única del dueño", () -> showChangePasswordDialog(true)));
         root.addView(ownerAction("🕓", "Historial de conexiones", "Revisa los inicios de sesión", () -> showHistoryDialog()));
         root.addView(ownerAction("📋", "Vehículos registrados", "Ver listado de vehículos en la flota", () -> showTaxiListScreen()));
+        Button logout = button("Cerrar sesión", DANGER, Color.WHITE);
+        logout.setOnClickListener(v -> { session.logout(); showStartScreen(); });
+        LinearLayout.LayoutParams logoutLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+        logoutLp.setMargins(dp(18), dp(18), dp(18), dp(24));
+        root.addView(logout, logoutLp);
         setContentView(scroll(root));
     }
 
