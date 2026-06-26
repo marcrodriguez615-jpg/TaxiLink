@@ -80,11 +80,11 @@ public class UserSession {
     }
 
     public String getServerUrl() {
-        return prefs.getString("server_url", ApiConfig.SERVER_URL);
+        return ApiConfig.SERVER_URL;
     }
 
     public void setServerUrl(String url) {
-        prefs.edit().putString("server_url", url).apply();
+        prefs.edit().putString("server_url", ApiConfig.SERVER_URL).apply();
     }
 
     public String getRememberCompany() {

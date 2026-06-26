@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -11,14 +13,39 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const companies = [{ name: 'Taxi Central', identifier: 'central', password: '123456', ownerPassword: 'admin123' }];
-const accessRequests = [];
-const taxis = [];
-const history = [];
+const DATA_FILE = path.join(__dirname, 'data.json');
+const data = loadData();
+const companies = data.companies;
+const accessRequests = data.accessRequests;
+const taxis = data.taxis;
+const history = data.history;
+
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  } catch (error) {
+    console.warn('No se pudo cargar data.json:', error.message);
+  }
+  return {
+    companies: [{ name: 'Taxi Central', identifier: 'central', password: '123456', ownerPassword: 'admin123' }],
+    accessRequests: [],
+    taxis: [],
+    history: []
+  };
+}
+
+function saveData() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ companies, accessRequests, taxis, history }, null, 2));
+  } catch (error) {
+    console.warn('No se pudo guardar data.json:', error.message);
+  }
+}
 
 function addHistory(text) {
   history.unshift({ text, at: new Date().toISOString() });
   if (history.length > 100) history.pop();
+  saveData();
 }
 
 function broadcast(type, payload) {
@@ -33,7 +60,15 @@ app.get('/health', (req, res) => res.json({ ok: true, service: 'TaxiLink backend
 app.post('/companies', (req, res) => {
   const { name, identifier, password, ownerPassword } = req.body;
   if (!name || !identifier || !password || !ownerPassword) return res.status(400).json({ error: 'Faltan datos' });
-  if (companies.some(c => c.identifier === identifier)) return res.status(409).json({ error: 'Identificador ya existe' });
+  const existing = companies.find(c => c.identifier === identifier);
+  if (existing) {
+    if (existing.ownerPassword !== ownerPassword) return res.status(409).json({ error: 'El identificador ya existe con otra contraseña de propietario' });
+    existing.name = name;
+    existing.password = password;
+    existing.ownerPassword = ownerPassword;
+    saveData();
+    return res.json({ company: { name: existing.name, identifier: existing.identifier }, updated: true });
+  }
   const company = { name, identifier, password, ownerPassword };
   companies.push(company);
   addHistory(`Empresa creada: ${name}`);
@@ -58,8 +93,9 @@ app.post('/login', (req, res) => {
 
 app.post('/access-requests', (req, res) => {
   const { identifier, password, taxiNumber, driverName, deviceId } = req.body;
-  const company = companies.find(c => c.identifier === identifier && c.password === password);
-  if (!company) return res.status(401).json({ error: 'Empresa o contraseña incorrecta' });
+  const company = companies.find(c => c.identifier === identifier);
+  if (!company) return res.status(404).json({ error: 'La empresa no existe. Primero créala desde el móvil del propietario.' });
+  if (company.password !== password) return res.status(401).json({ error: 'Contraseña de conductores incorrecta' });
   if (!taxiNumber || !driverName || !deviceId) return res.status(400).json({ error: 'Faltan datos del conductor' });
   let request = accessRequests.find(r => r.deviceId === deviceId && r.identifier === identifier && r.status === 'pending');
   if (!request) {
@@ -67,6 +103,7 @@ app.post('/access-requests', (req, res) => {
     accessRequests.push(request);
     addHistory(`${driverName} pidió acceso como Taxi ${taxiNumber}`);
     broadcast('access-request', request);
+    saveData();
   }
   res.status(201).json({ request });
 });
@@ -94,6 +131,7 @@ app.post('/access-requests/:id/approve', (req, res) => {
   }
   addHistory(`${request.driverName} fue ${request.status === 'approved' ? 'aprobado' : 'rechazado'} como Taxi ${request.taxiNumber}`);
   broadcast('access-reviewed', request);
+  saveData();
   res.json({ request });
 });
 
@@ -114,6 +152,7 @@ app.post('/taxis/:number/location', (req, res) => {
   Object.assign(taxi, { driverName: req.body.driverName || taxi.driverName, latitude: Number(req.body.latitude), longitude: Number(req.body.longitude), speed: Number(req.body.speed || 0), direction: req.body.direction || '--', lastUpdate: new Date().toISOString(), online: true });
   addHistory(`Taxi ${taxi.number} actualizó ubicación`);
   broadcast('taxi-location', taxi);
+  saveData();
   res.json({ taxi });
 });
 
