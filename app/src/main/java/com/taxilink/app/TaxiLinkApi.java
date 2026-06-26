@@ -126,6 +126,36 @@ public class TaxiLinkApi {
         });
     }
 
+    public void startWalkie(int taxiNumber, String driverName, Callback<Boolean> callback) {
+        run(callback, () -> {
+            JSONObject body = new JSONObject();
+            body.put("identifier", session.getCompany().identifier);
+            body.put("taxiNumber", taxiNumber);
+            body.put("driverName", driverName);
+            request("POST", "/walkie/start", body);
+            return true;
+        });
+    }
+
+    public void stopWalkie(int taxiNumber, Callback<Boolean> callback) {
+        run(callback, () -> {
+            JSONObject body = new JSONObject();
+            body.put("identifier", session.getCompany().identifier);
+            body.put("taxiNumber", taxiNumber);
+            request("POST", "/walkie/stop", body);
+            return true;
+        });
+    }
+
+    public void getWalkieStatus(Callback<String> callback) {
+        run(callback, () -> {
+            JSONObject response = request("GET", "/walkie?identifier=" + session.getCompany().identifier, null);
+            JSONObject walkie = response.getJSONObject("walkie");
+            if (!walkie.optBoolean("speaking", false)) return "Walkie listo";
+            return "Hablando: Taxi " + walkie.optInt("taxiNumber") + " · " + walkie.optString("driverName", "Conductor");
+        });
+    }
+
     private interface Work<T> { T execute() throws Exception; }
 
     private <T> void run(Callback<T> callback, Work<T> work) {

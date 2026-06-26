@@ -19,6 +19,7 @@ const companies = data.companies;
 const accessRequests = data.accessRequests;
 const taxis = data.taxis;
 const history = data.history;
+const walkieStates = data.walkieStates || [];
 
 function loadData() {
   try {
@@ -30,13 +31,14 @@ function loadData() {
     companies: [{ name: 'Taxi Central', identifier: 'central', password: '123456', ownerPassword: 'admin123' }],
     accessRequests: [],
     taxis: [],
-    history: []
+    history: [],
+    walkieStates: []
   };
 }
 
 function saveData() {
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ companies, accessRequests, taxis, history }, null, 2));
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ companies, accessRequests, taxis, history, walkieStates }, null, 2));
   } catch (error) {
     console.warn('No se pudo guardar data.json:', error.message);
   }
@@ -157,6 +159,47 @@ app.post('/taxis/:number/location', (req, res) => {
 });
 
 app.get('/history', (req, res) => res.json({ history }));
+
+app.post('/walkie/start', (req, res) => {
+  const { identifier, taxiNumber, driverName } = req.body;
+  if (!identifier || !taxiNumber || !driverName) return res.status(400).json({ error: 'Faltan datos de walkie' });
+  let state = walkieStates.find(w => w.identifier === identifier);
+  if (!state) {
+    state = { identifier };
+    walkieStates.push(state);
+  }
+  state.taxiNumber = Number(taxiNumber);
+  state.driverName = driverName;
+  state.speaking = true;
+  state.updatedAt = new Date().toISOString();
+  saveData();
+  broadcast('walkie-start', state);
+  res.json({ walkie: state });
+});
+
+app.post('/walkie/stop', (req, res) => {
+  const { identifier, taxiNumber } = req.body;
+  const state = walkieStates.find(w => w.identifier === identifier);
+  if (state && (!taxiNumber || Number(taxiNumber) === Number(state.taxiNumber))) {
+    state.speaking = false;
+    state.updatedAt = new Date().toISOString();
+    saveData();
+    broadcast('walkie-stop', state);
+  }
+  res.json({ walkie: state || { identifier, speaking: false } });
+});
+
+app.get('/walkie', (req, res) => {
+  const identifier = req.query.identifier;
+  const state = walkieStates.find(w => w.identifier === identifier);
+  if (!state) return res.json({ walkie: { identifier, speaking: false } });
+  const active = state.speaking && state.updatedAt && Date.now() - new Date(state.updatedAt).getTime() < 30000;
+  if (state.speaking && !active) {
+    state.speaking = false;
+    saveData();
+  }
+  res.json({ walkie: { ...state, speaking: active } });
+});
 
 wss.on('connection', ws => {
   ws.send(JSON.stringify({ type: 'welcome', payload: 'Conectado a TaxiLink WS' }));

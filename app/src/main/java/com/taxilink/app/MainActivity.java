@@ -67,6 +67,8 @@ public class MainActivity extends android.app.Activity {
     private Handler handler;
     private LocationListener liveLocationListener;
     private Runnable taxiPoller;
+    private Runnable walkiePoller;
+    private boolean localSpeaking;
     private TextView taxiTitleText;
     private TextView taxiInfoText;
 
@@ -299,6 +301,7 @@ public class MainActivity extends android.app.Activity {
         main.addView(mapView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         startRealGpsUpdates();
         startTaxiPolling();
+        startWalkiePolling();
 
         LinearLayout panel = column();
         panel.setPadding(dp(22), dp(18), dp(22), dp(16));
@@ -339,13 +342,17 @@ public class MainActivity extends android.app.Activity {
     public void updateWalkieState(boolean speaking) {
         if (speaking && !PermissionHelper.hasAudio(this)) { PermissionHelper.requestNeededPermissions(this); toast("Concede permiso de micrófono para usar Walkie"); return; }
         if (speaking) {
+            localSpeaking = true;
             walkieLabel.setText("Hablando: " + selectedTaxi.name());
             micButton.setBackground(round(YELLOW, 35, 0, YELLOW));
             micButton.setTextColor(NAVY_DARK);
+            api.startWalkie(selectedTaxi.number, session.getDriverName(), (ok, error) -> runOnUiThread(() -> { if (error != null) toast("Walkie sin conexión: " + error.getMessage()); }));
         } else {
+            localSpeaking = false;
             walkieLabel.setText("Walkie listo");
             micButton.setBackground(round(TEAL, 35, 0, TEAL));
             micButton.setTextColor(Color.WHITE);
+            api.stopWalkie(selectedTaxi.number, (ok, error) -> { });
         }
     }
 
@@ -563,6 +570,21 @@ public class MainActivity extends android.app.Activity {
             }
         };
         handler.postDelayed(taxiPoller, 2000);
+    }
+
+    private void startWalkiePolling() {
+        if (walkiePoller != null) handler.removeCallbacks(walkiePoller);
+        walkiePoller = new Runnable() {
+            @Override public void run() {
+                api.getWalkieStatus((status, error) -> runOnUiThread(() -> {
+                    if (error == null && walkieLabel != null && !localSpeaking) {
+                        walkieLabel.setText(status);
+                    }
+                }));
+                handler.postDelayed(this, 3000);
+            }
+        };
+        handler.postDelayed(walkiePoller, 2500);
     }
 
     private void updateUserMarker(double latitude, double longitude) {
