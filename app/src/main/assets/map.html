@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>TaxiLink Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body, #map { height:100%; margin:0; background:#dfe7ee; font-family:Arial, sans-serif; }
+    .taxi-marker { background:#F5C400; color:#061A2E; border:3px solid #fff; border-radius:18px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; box-shadow:0 5px 14px rgba(0,0,0,.30); font-size:18px; }
+    .user-marker { background:#009688; color:white; border:3px solid white; border-radius:18px; width:30px; height:30px; display:flex; align-items:center; justify-content:center; box-shadow:0 5px 14px rgba(0,0,0,.30); }
+    #fallback { display:none; height:100%; position:relative; overflow:hidden; background:linear-gradient(135deg,#dbe6ef,#f4f6f8); }
+    .road { position:absolute; background:#c4ccd6; border-radius:40px; }
+    .road.a { width:140%; height:60px; left:-20%; top:45%; transform:rotate(-18deg); }
+    .road.b { width:70px; height:140%; left:48%; top:-20%; transform:rotate(10deg); }
+    .fallback-taxi { position:absolute; background:#F5C400; color:#061A2E; border:3px solid white; border-radius:18px; padding:7px; font-weight:bold; box-shadow:0 5px 16px rgba(0,0,0,.25); }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="fallback">
+    <div class="road a"></div><div class="road b"></div>
+    <div class="fallback-taxi" style="left:18%;top:35%">🚕 1</div>
+    <div class="fallback-taxi" style="left:60%;top:24%">🚕 2</div>
+    <div class="fallback-taxi" style="left:45%;top:50%">🚕 3</div>
+    <div class="fallback-taxi" style="left:72%;top:62%">🚕 4</div>
+    <div class="fallback-taxi" style="left:28%;top:68%;opacity:.55">🚕 5</div>
+    <div class="fallback-taxi" style="left:54%;top:77%">🚕 6</div>
+  </div>
+  <script>
+    var map, markers = {}, userMarker;
+    function icon(label, online) { return L.divIcon({className:'', html:'<div class="taxi-marker" style="opacity:'+(online?1:.45)+'">🚕</div>', iconSize:[34,34], iconAnchor:[17,17], popupAnchor:[0,-16]}); }
+    function init() {
+      try {
+        map = L.map('map', { zoomControl:false }).setView([41.5407, 2.2139], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap', maxZoom:19 }).addTo(map);
+      } catch(e) { showFallback(); }
+    }
+    function showFallback(){ document.getElementById('map').style.display='none'; document.getElementById('fallback').style.display='block'; }
+    function updateTaxi(number, lat, lng, online) { if (markers[number]) { markers[number].setLatLng([lat,lng]); markers[number].setIcon(icon(number, online)); } }
+    function setTaxi(number, lat, lng, online, name) { if (!map) return; if (markers[number]) { markers[number].setLatLng([lat,lng]); markers[number].setIcon(icon(number, online)); } else { markers[number] = L.marker([lat,lng], {icon:icon(number, online)}).addTo(map); } markers[number].bindPopup((name || 'Taxi') + ' · Taxi ' + number); }
+    function clearTaxis() { Object.keys(markers).forEach(function(k){ map.removeLayer(markers[k]); }); markers = {}; }
+    function setUserLocation(lat, lng) { if (!map) return; var i=L.divIcon({className:'', html:'<div class="user-marker">•</div>', iconSize:[30,30], iconAnchor:[15,15]}); if (!userMarker) userMarker=L.marker([lat,lng],{icon:i}).addTo(map).bindPopup('Tu ubicación'); else userMarker.setLatLng([lat,lng]); }
+    window.onerror = function(){ showFallback(); };
+    init();
+  </script>
+</body>
+</html>

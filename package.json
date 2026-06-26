@@ -1,18 +1,13 @@
 {
-  "name": "taxilink-backend",
+  "name": "taxilink-root",
   "version": "1.0.0",
-  "description": "Backend opcional para TaxiLink con Express y WebSocket.",
-  "main": "server.js",
+  "private": true,
+  "description": "Root launcher for TaxiLink backend on Render.",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "postinstall": "cd backend && npm install"
   },
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "ws": "^8.18.0"
   }
 }

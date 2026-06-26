@@ -1,0 +1,628 @@
+package com.taxilink.app;
+
+import android.annotation.SuppressLint;
+import android.app.AlertDialog;
+import android.app.Dialog;
+import android.content.pm.ActivityInfo;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.InputType;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Space;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+import org.osmdroid.config.Configuration;
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
+import org.osmdroid.util.GeoPoint;
+import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Marker;
+
+public class MainActivity extends android.app.Activity {
+    private final int NAVY = Color.rgb(6, 26, 46);
+    private final int NAVY_DARK = Color.rgb(3, 17, 31);
+    private final int YELLOW = Color.rgb(245, 196, 0);
+    private final int TEAL = Color.rgb(0, 150, 136);
+    private final int BG = Color.rgb(244, 246, 248);
+    private final int TEXT = Color.rgb(28, 28, 28);
+    private final int SECONDARY = Color.rgb(107, 114, 128);
+    private final int DANGER = Color.rgb(229, 57, 53);
+    private final int LINE = Color.rgb(229, 231, 235);
+
+    private UserSession session;
+    private TaxiRepository repository;
+    private TextView walkieLabel;
+    private Button micButton;
+    private MapView mapView;
+    private final Map<Integer, Marker> taxiMarkers = new HashMap<>();
+    private Marker userMarker;
+    private Taxi selectedTaxi;
+    private TaxiLinkApi api;
+    private Handler handler;
+    private LocationListener liveLocationListener;
+    private Runnable taxiPoller;
+    private TextView taxiTitleText;
+    private TextView taxiInfoText;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        session = new UserSession(this);
+        repository = new TaxiRepository();
+        api = new TaxiLinkApi(this, session);
+        handler = new Handler(Looper.getMainLooper());
+        selectedTaxi = repository.getTaxi(safeTaxiNumber());
+        restoreSessionOrStart();
+    }
+
+    private void restoreSessionOrStart() {
+        if (!session.isLoggedIn()) {
+            showStartScreen();
+            return;
+        }
+        if ("Propietario".equals(session.getRole())) {
+            showOwnerPanel();
+        } else if (!session.isDriverApproved()) {
+            if (!session.getRequestId().isEmpty()) showWaitingApprovalScreen(session.getRequestId());
+            else showLoginScreen();
+        } else {
+            showMapScreen();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mapView != null) mapView.onResume();
+    }
+
+    @Override
+    protected void onPause() {
+        if (mapView != null) mapView.onPause();
+        super.onPause();
+    }
+
+    public void showStartScreen() {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(NAVY);
+        LinearLayout content = column();
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+        content.setPadding(dp(26), dp(42), dp(26), dp(28));
+        root.addView(content, match());
+
+        TextView logo = text("⌖", 54, YELLOW, true);
+        logo.setGravity(Gravity.CENTER);
+        logo.setBackground(round(YELLOW, 90, 0, YELLOW));
+        LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(86), dp(86));
+        content.addView(logo, logoLp);
+
+        LinearLayout title = row();
+        title.setGravity(Gravity.CENTER);
+        title.addView(text("Taxi", 39, Color.WHITE, true));
+        title.addView(text("Link", 39, YELLOW, true));
+        content.addView(title, wrapMT(20));
+        TextView slogan = text("Conecta tu flota. Comunica tu camino.", 16, Color.WHITE, false);
+        slogan.setGravity(Gravity.CENTER);
+        slogan.setAlpha(.86f);
+        content.addView(slogan, wrapMT(8));
+
+        View taxiArt = taxiIllustration();
+        content.addView(taxiArt, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(210)));
+        Space sp = new Space(this);
+        content.addView(sp, new LinearLayout.LayoutParams(1, 0, 1));
+
+        Button create = button("Crear empresa", YELLOW, NAVY_DARK);
+        create.setOnClickListener(v -> showCreateCompanyScreen());
+        content.addView(create, matchH(56));
+        Button login = button("Acceder a empresa", NAVY, Color.WHITE);
+        login.setBackground(round(NAVY, 18, 2, Color.WHITE));
+        login.setOnClickListener(v -> showLoginScreen());
+        content.addView(login, matchHMT(56, 14));
+
+        setContentView(root);
+    }
+
+    public void showCreateCompanyScreen() {
+        LinearLayout root = baseWithHeader("Crear empresa", "🏢", true, () -> showStartScreen());
+        TextView intro = text("Registra tu empresa localmente y empieza a gestionar la flota.", 15, SECONDARY, false);
+        intro.setPadding(dp(22), dp(18), dp(22), 0);
+        root.addView(intro);
+        LinearLayout card = card();
+        EditText name = field("Nombre de empresa", "Ej. Taxi Central", false);
+        EditText id = field("Identificador", "Ej. central", false);
+        EditText pass = field("Contraseña conductores", "Para que los conductores soliciten acceso", true);
+        EditText ownerPass = field("Contraseña propietario", "Clave única del dueño", true);
+        card.addView(name); card.addView(id, mt(12)); card.addView(pass, mt(12)); card.addView(ownerPass, mt(12));
+        Button submit = button("Crear empresa", TEAL, Color.WHITE);
+        submit.setOnClickListener(v -> {
+            if (empty(name) || empty(id) || pass.getText().toString().trim().length() < 6 || ownerPass.getText().toString().trim().length() < 6) {
+                toast("Completa los campos. Las contraseñas deben tener mínimo 6 caracteres.");
+                return;
+            }
+            Company company = new Company(name.getText().toString().trim(), id.getText().toString().trim(), pass.getText().toString().trim(), ownerPass.getText().toString().trim());
+            session.saveCompany(company);
+            api.createCompany(company, (ok, error) -> runOnUiThread(() -> {
+                if (error != null) toast("Empresa guardada localmente. Backend no conectado: " + error.getMessage());
+                else toast("Empresa creada y conectada al backend");
+                showOwnerPanel();
+            }));
+        });
+        card.addView(submit, matchHMT(54, 18));
+        root.addView(card, cardLp());
+        setContentView(scroll(root));
+    }
+
+    public void showLoginScreen() {
+        LinearLayout root = baseWithHeader("Iniciar sesión conductor", "👤", true, () -> showStartScreen());
+        TextView sub = text("Ingresa tus datos para continuar", 15, SECONDARY, false);
+        sub.setPadding(dp(22), dp(14), dp(22), 0);
+        root.addView(sub);
+        LinearLayout card = card();
+        EditText driverName = field("Nombre del conductor", "Ej. Aritz", false);
+        EditText company = field("Identificador de empresa", "central", false);
+        company.setText(session.getRememberCompany());
+        EditText pass = field("Contraseña", "Contraseña de empresa", true);
+        EditText taxi = field("Número de taxi", "Ej. 3", false);
+        taxi.setInputType(InputType.TYPE_CLASS_NUMBER);
+        taxi.setText(session.getRememberTaxi());
+        CheckBox remember = new CheckBox(this);
+        remember.setText("Recordar mis datos");
+        remember.setTextColor(TEXT);
+        card.addView(driverName); card.addView(company, mt(12)); card.addView(pass, mt(12)); card.addView(taxi, mt(12)); card.addView(remember, mt(10));
+        Button enter = button("Entrar", TEAL, Color.WHITE);
+        enter.setOnClickListener(v -> {
+            if (empty(driverName) || empty(company) || empty(pass) || empty(taxi)) { toast("Todos los campos son obligatorios"); return; }
+            enter.setEnabled(false);
+            enter.setText("Solicitando acceso...");
+            api.requestAccess(company.getText().toString().trim(), pass.getText().toString().trim(), taxi.getText().toString().trim(), driverName.getText().toString().trim(), (requestId, error) -> runOnUiThread(() -> {
+                enter.setEnabled(true);
+                enter.setText("Entrar");
+                if (error != null) { toast("No se pudo solicitar acceso: " + error.getMessage()); return; }
+                session.saveDriverLogin(company.getText().toString().trim(), taxi.getText().toString().trim(), remember.isChecked());
+                session.saveDriverIdentity(driverName.getText().toString().trim(), requestId);
+                showWaitingApprovalScreen(requestId);
+            }));
+        });
+        card.addView(enter, matchHMT(54, 18));
+        Button ownerEnter = button("Entrar como propietario", NAVY, Color.WHITE);
+        ownerEnter.setOnClickListener(v -> {
+            if (empty(company) || empty(pass)) { toast("Indica empresa y contraseña de propietario"); return; }
+            ownerEnter.setEnabled(false);
+            ownerEnter.setText("Validando propietario...");
+            api.ownerLogin(company.getText().toString().trim(), pass.getText().toString().trim(), (companyName, error) -> runOnUiThread(() -> {
+                ownerEnter.setEnabled(true);
+                ownerEnter.setText("Entrar como propietario");
+                if (error != null) {
+                    Company local = session.getCompany();
+                    if (company.getText().toString().trim().equals(local.identifier) && pass.getText().toString().trim().equals(local.ownerPassword)) {
+                        session.setRole("Propietario");
+                        showOwnerPanel();
+                    } else toast("Contraseña de propietario incorrecta");
+                    return;
+                }
+                Company current = session.getCompany();
+                session.saveCompany(new Company(companyName, company.getText().toString().trim(), current.password, pass.getText().toString().trim()));
+                showOwnerPanel();
+            }));
+        });
+        card.addView(ownerEnter, matchHMT(54, 12));
+        root.addView(card, cardLp());
+        setContentView(scroll(root));
+    }
+
+    public void showWaitingApprovalScreen(String requestId) {
+        LinearLayout root = baseWithHeader("Esperando aprobación", "←", true, () -> showLoginScreen());
+        LinearLayout card = card();
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.addView(circleText("⏳", YELLOW, NAVY, 76));
+        TextView title = text("Solicitud enviada", 23, TEXT, true);
+        title.setGravity(Gravity.CENTER);
+        card.addView(title, wrapMT(16));
+        TextView body = text("El propietario debe aprobar a " + session.getDriverName() + " como Taxi " + session.getTaxiNumber() + ". Cuando lo apruebe, entrarás al mapa con GPS real.", 15, SECONDARY, false);
+        body.setGravity(Gravity.CENTER);
+        body.setPadding(dp(10), dp(8), dp(10), dp(8));
+        card.addView(body);
+        Button refresh = button("Comprobar ahora", TEAL, Color.WHITE);
+        refresh.setOnClickListener(v -> checkApproval(requestId));
+        card.addView(refresh, matchHMT(54, 18));
+        root.addView(card, cardLp());
+        setContentView(scroll(root));
+        handler.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (requestId.equals(session.getRequestId())) {
+                    checkApproval(requestId);
+                    handler.postDelayed(this, 5000);
+                }
+            }
+        }, 1500);
+    }
+
+    private void checkApproval(String requestId) {
+        api.getRequestStatus(requestId, (status, error) -> runOnUiThread(() -> {
+            if (error != null) { toast("Esperando servidor: " + error.getMessage()); return; }
+            if ("approved".equals(status)) {
+                toast("Acceso aprobado");
+                session.setDriverApproved(true);
+                selectedTaxi = new Taxi(safeTaxiNumber(), true, 0, "--", 0, 0, now());
+                showMapScreen();
+            } else if ("rejected".equals(status)) {
+                toast("Acceso rechazado por el propietario");
+                showLoginScreen();
+            }
+        }));
+    }
+
+    @SuppressLint({"SetJavaScriptEnabled", "ClickableViewAccessibility"})
+    public void showMapScreen() {
+        PermissionHelper.requestNeededPermissions(this);
+        Configuration.getInstance().setUserAgentValue(getPackageName());
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(BG);
+        LinearLayout main = column();
+        root.addView(main, match());
+        main.addView(appHeader(session.getCompany().name, "● En línea", "☰", "🔔", () -> { if ("Propietario".equals(session.getRole())) showOwnerPanel(); else showProfileSettingsScreen(); }, () -> toast("Sin notificaciones nuevas")));
+        mapView = new MapView(this);
+        mapView.setTileSource(TileSourceFactory.MAPNIK);
+        mapView.setMultiTouchControls(true);
+        mapView.getController().setZoom(15.0);
+        mapView.getController().setCenter(new GeoPoint(41.6080, 2.2877));
+        main.addView(mapView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        startRealGpsUpdates();
+        startTaxiPolling();
+
+        LinearLayout panel = column();
+        panel.setPadding(dp(22), dp(18), dp(22), dp(16));
+        panel.setBackgroundResource(com.taxilink.app.R.drawable.bg_bottom_panel);
+        root.addView(panel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(245), Gravity.BOTTOM));
+        LinearLayout info = row(); info.setGravity(Gravity.CENTER_VERTICAL);
+        TextView icon = circleText("🚕", YELLOW, NAVY, 44);
+        info.addView(icon);
+        LinearLayout texts = column(); texts.setPadding(dp(12), 0, 0, 0);
+        taxiTitleText = text(selectedTaxi.name(), 20, TEXT, true);
+        taxiInfoText = text("Esperando GPS real...", 13, SECONDARY, false);
+        texts.addView(taxiTitleText);
+        texts.addView(taxiInfoText);
+        info.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        panel.addView(info);
+        LinearLayout controls = row(); controls.setGravity(Gravity.CENTER); controls.setPadding(0, dp(14), 0, 0);
+        controls.addView(roundSmallButton("🔊", NAVY, Color.WHITE));
+        micButton = button("🎙", TEAL, Color.WHITE);
+        micButton.setTextSize(24);
+        micButton.setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) { updateWalkieState(true); return true; }
+            if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) { updateWalkieState(false); return true; }
+            return true;
+        });
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(dp(82), dp(70)); mlp.setMargins(dp(22), 0, dp(22), 0);
+        controls.addView(micButton, mlp);
+        Button chat = roundSmallButton("💬", NAVY, Color.WHITE); chat.setOnClickListener(v -> toast("Chat local preparado para futura conexión"));
+        controls.addView(chat);
+        panel.addView(controls);
+        walkieLabel = text("Walkie listo", 14, TEAL, true); walkieLabel.setGravity(Gravity.CENTER); walkieLabel.setBackground(round(Color.rgb(232, 249, 247), 18, 1, TEAL));
+        LinearLayout.LayoutParams walkieLp = new LinearLayout.LayoutParams(dp(170), dp(36));
+        walkieLp.gravity = Gravity.CENTER_HORIZONTAL;
+        walkieLp.setMargins(0, dp(14), 0, 0);
+        panel.addView(walkieLabel, walkieLp);
+        setContentView(root);
+    }
+
+    public void updateWalkieState(boolean speaking) {
+        if (speaking && !PermissionHelper.hasAudio(this)) { PermissionHelper.requestNeededPermissions(this); toast("Concede permiso de micrófono para usar Walkie"); return; }
+        if (speaking) {
+            walkieLabel.setText("Hablando: " + selectedTaxi.name());
+            micButton.setBackground(round(YELLOW, 35, 0, YELLOW));
+            micButton.setTextColor(NAVY_DARK);
+        } else {
+            walkieLabel.setText("Walkie listo");
+            micButton.setBackground(round(TEAL, 35, 0, TEAL));
+            micButton.setTextColor(Color.WHITE);
+        }
+    }
+
+    public void showOwnerPanel() {
+        session.setRole("Propietario");
+        LinearLayout root = baseWithHeader("Panel propietario", "☰", false, null);
+        root.addView(subtitle(session.getCompany().name));
+        TextView serverInfo = text("Conectado al servidor central TaxiLink\nLos conductores pueden conectarse desde cualquier red con Internet.", 14, TEAL, true);
+        serverInfo.setPadding(dp(22), dp(10), dp(22), dp(4));
+        root.addView(serverInfo);
+        root.addView(ownerAction("✅", "Solicitudes de acceso", "Aprueba conductores que quieren entrar", () -> showPendingRequestsDialog()));
+        root.addView(ownerAction("🚕", "Gestión de taxis", "Administra y monitorea tu flota", () -> showTaxiListScreen()));
+        root.addView(ownerAction("🔐", "Activar/Desactivar usuarios", "Gestiona los accesos de conductores", () -> toast("Gestión local lista para ampliar")));
+        root.addView(ownerAction("🔒", "Cambiar contraseña conductores", "Actualiza la clave para solicitar acceso", () -> showChangePasswordDialog(false)));
+        root.addView(ownerAction("👑", "Cambiar contraseña propietario", "Actualiza la clave única del dueño", () -> showChangePasswordDialog(true)));
+        root.addView(ownerAction("🕓", "Historial de conexiones", "Revisa los inicios de sesión", () -> showHistoryDialog()));
+        root.addView(ownerAction("📋", "Vehículos registrados", "Ver listado de vehículos en la flota", () -> showTaxiListScreen()));
+        setContentView(scroll(root));
+    }
+
+    public void showTaxiListScreen() {
+        LinearLayout root = baseWithHeader("Lista de taxis", "☰", false, null);
+        root.addView(subtitle(session.getCompany().name));
+        EditText search = field("Buscar taxi", "Buscar taxi", false);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)); slp.setMargins(dp(20), dp(14), dp(20), dp(10));
+        root.addView(search, slp);
+        LinearLayout list = column();
+        root.addView(list);
+        List<Taxi> liveTaxis = new ArrayList<>();
+        Runnable[] render = new Runnable[1];
+        render[0] = () -> {
+            list.removeAllViews();
+            String q = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            if (liveTaxis.isEmpty()) {
+                TextView empty = text("Aún no hay taxis con GPS real conectado. Cuando un conductor sea aprobado y active ubicación, aparecerá aquí.", 15, SECONDARY, false);
+                empty.setPadding(dp(24), dp(24), dp(24), dp(24));
+                list.addView(empty);
+                return;
+            }
+            for (Taxi taxi : liveTaxis) if (q.isEmpty() || taxi.name().toLowerCase(Locale.ROOT).contains(q) || taxi.driverName.toLowerCase(Locale.ROOT).contains(q)) list.addView(taxiRow(taxi));
+        };
+        search.addTextChangedListener(new android.text.TextWatcher() { public void beforeTextChanged(CharSequence s, int st, int c, int a) {} public void onTextChanged(CharSequence s, int st, int b, int c) { render[0].run(); } public void afterTextChanged(android.text.Editable e) {} });
+        render[0].run();
+        api.getTaxis(session.getCompany().identifier, (taxis, error) -> runOnUiThread(() -> {
+            if (error != null) toast("No se pudo cargar la flota real: " + error.getMessage());
+            else { liveTaxis.clear(); liveTaxis.addAll(taxis); render[0].run(); }
+        }));
+        FrameLayout frame = new FrameLayout(this); frame.setBackgroundColor(BG); frame.addView(scroll(root), match());
+        frame.addView(bottomNav("Taxis"), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(74), Gravity.BOTTOM));
+        setContentView(frame);
+    }
+
+    public void showProfileSettingsScreen() {
+        LinearLayout root = baseWithHeader("Perfil y configuración", "←", false, null);
+        LinearLayout profile = card(); profile.setGravity(Gravity.CENTER_HORIZONTAL);
+        profile.addView(circleText(session.getRole().equals("Propietario") ? "👤" : "🚕", TEAL, Color.WHITE, 76));
+        profile.addView(text(session.getRole().equals("Propietario") ? "Propietario" : "Juan Pérez", 22, TEXT, true), wrapMT(12));
+        TextView role = text(session.getRole(), 14, SECONDARY, false); role.setGravity(Gravity.CENTER); profile.addView(role);
+        root.addView(profile, cardLp());
+        root.addView(settingsRow("Permisos de usuarios", "Gestiona roles y accesos", null));
+        root.addView(settingsRow("Notificaciones", "Alertas de flota y conexión", true));
+        root.addView(settingsRow("Micrófono (Walkie)", "Comunicación local visual", true));
+        root.addView(settingsRow("Ubicación en primer plano", "Mostrar posición actual", true));
+        root.addView(settingsRow("Ubicación en segundo plano", "Preparado para servicio futuro", false));
+        Button logout = button("Cerrar sesión", DANGER, Color.WHITE);
+        logout.setOnClickListener(v -> { session.logout(); showStartScreen(); });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)); lp.setMargins(dp(20), dp(18), dp(20), dp(100));
+        root.addView(logout, lp);
+        FrameLayout frame = new FrameLayout(this); frame.setBackgroundColor(BG); frame.addView(scroll(root), match());
+        frame.addView(bottomNav("Más"), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(74), Gravity.BOTTOM));
+        setContentView(frame);
+    }
+
+    private LinearLayout baseWithHeader(String title, String left, boolean back, Runnable backAction) {
+        LinearLayout root = column(); root.setBackgroundColor(BG);
+        root.addView(appHeader(title, "", left, "🔔", back ? backAction : () -> showMapScreen(), () -> toast("Sin notificaciones nuevas")));
+        return root;
+    }
+
+    private LinearLayout appHeader(String title, String sub, String left, String right, Runnable leftAction, Runnable rightAction) {
+        LinearLayout bar = row(); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(16), dp(16), dp(16), dp(14)); bar.setBackgroundColor(NAVY_DARK);
+        TextView l = text(left, 24, Color.WHITE, true); l.setGravity(Gravity.CENTER); l.setOnClickListener(v -> { if (leftAction != null) leftAction.run(); }); bar.addView(l, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        LinearLayout mid = column(); mid.addView(text(title, 20, Color.WHITE, true)); if (!sub.isEmpty()) mid.addView(text(sub, 13, TEAL, true)); bar.addView(mid, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView r = text(right, 21, Color.WHITE, false); r.setGravity(Gravity.CENTER); r.setOnClickListener(v -> rightAction.run()); bar.addView(r, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        return bar;
+    }
+
+    private LinearLayout ownerAction(String icon, String title, String desc, Runnable action) {
+        LinearLayout row = row(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(14), dp(14), dp(14)); row.setBackgroundResource(R.drawable.bg_card); row.setOnClickListener(v -> action.run()); row.setElevation(dp(2));
+        row.addView(circleText(icon, TEAL, Color.WHITE, 46));
+        LinearLayout txt = column(); txt.setPadding(dp(14), 0, 0, 0); txt.addView(text(title, 17, TEXT, true)); txt.addView(text(desc, 13, SECONDARY, false)); row.addView(txt, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(text("›", 30, SECONDARY, false));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(dp(18), dp(10), dp(18), 0); row.setLayoutParams(lp);
+        return row;
+    }
+
+    private View taxiRow(Taxi taxi) {
+        LinearLayout row = row(); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(16), dp(14), dp(14), dp(14)); row.setBackgroundResource(R.drawable.bg_card); row.setElevation(dp(2)); row.setOnClickListener(v -> showTaxiDetail(taxi));
+        row.addView(circleText("🚕", taxi.online ? YELLOW : Color.LTGRAY, NAVY, 46));
+        LinearLayout txt = column(); txt.setPadding(dp(14), 0, 0, 0); txt.addView(text(taxi.name() + " · " + taxi.driverName, 17, TEXT, true)); txt.addView(text(taxi.online ? "En línea" : "Fuera de línea", 13, taxi.online ? TEAL : DANGER, true)); row.addView(txt, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(text(taxi.online ? taxi.speed + " km/h" : "--", 14, SECONDARY, true)); row.addView(text("  ›", 26, SECONDARY, false));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(dp(18), dp(8), dp(18), 0); row.setLayoutParams(lp);
+        return row;
+    }
+
+    private void showTaxiDetail(Taxi taxi) {
+        selectedTaxi = taxi;
+        String message = "Conductor: " + taxi.driverName + "\nEstado: " + (taxi.online ? "En línea" : "Fuera de línea") + "\nVelocidad real: " + (taxi.online ? taxi.speed + " km/h" : "--") + "\nDirección: " + taxi.direction + "\nÚltima conexión: " + taxi.lastUpdate;
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setTitle(taxi.name()).setMessage(message).setPositiveButton("Ver en mapa", (d, w) -> showMapScreen()).setNegativeButton("Cerrar", null);
+        if (session.getRole().equals("Propietario")) b.setNeutralButton(taxi.online ? "Desactivar" : "Activar", (d, w) -> { repository.toggleTaxi(taxi); showTaxiListScreen(); });
+        b.show();
+    }
+
+    private LinearLayout settingsRow(String title, String desc, Boolean checked) {
+        LinearLayout row = ownerAction("⚙", title, desc, () -> toast("Configuración local"));
+        row.removeViewAt(row.getChildCount() - 1);
+        if (checked != null) { Switch sw = new Switch(this); sw.setChecked(checked); row.addView(sw); }
+        return row;
+    }
+
+    private LinearLayout bottomNav(String active) {
+        LinearLayout nav = row(); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(4), dp(8), dp(4), dp(8)); nav.setBackgroundColor(Color.WHITE); nav.setElevation(dp(8));
+        addNav(nav, "Mapa", "⌖", active, () -> showMapScreen()); addNav(nav, "Taxis", "🚕", active, () -> showTaxiListScreen()); addNav(nav, "", "🎙", active, () -> toast("Mantén pulsado el micrófono en el mapa")); addNav(nav, "Chats", "💬", active, () -> toast("Chats preparados para backend")); addNav(nav, "Más", "☰", active, () -> showProfileSettingsScreen());
+        return nav;
+    }
+
+    private void addNav(LinearLayout nav, String label, String icon, String active, Runnable action) {
+        TextView item = text(icon + (label.isEmpty() ? "" : "\n" + label), label.equals(active) ? 13 : 12, label.equals(active) ? TEAL : SECONDARY, true); item.setGravity(Gravity.CENTER); item.setOnClickListener(v -> action.run());
+        nav.addView(item, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
+    }
+
+    private void showChangePasswordDialog(boolean owner) {
+        EditText input = field("Nueva contraseña", "Mínimo 6 caracteres", true);
+        new AlertDialog.Builder(this).setTitle(owner ? "Contraseña propietario" : "Contraseña conductores").setView(input).setPositiveButton("Guardar", (d, w) -> {
+            if (input.getText().toString().trim().length() >= 6) {
+                if (owner) session.changeOwnerPassword(input.getText().toString().trim()); else session.changePassword(input.getText().toString().trim());
+                toast("Contraseña actualizada");
+            } else toast("Mínimo 6 caracteres");
+        }).setNegativeButton("Cancelar", null).show();
+    }
+
+    private void showHistoryDialog() {
+        new AlertDialog.Builder(this).setTitle("Historial de conexiones").setMessage("Hoy 09:14 · Taxi 3 conectado\nHoy 09:20 · Propietario abrió panel\nHoy 10:05 · Taxi 1 actualizó ubicación\nHoy 10:18 · Taxi 6 conectado").setPositiveButton("Cerrar", null).show();
+    }
+
+    private void showPendingRequestsDialog() {
+        api.getPendingRequests(session.getCompany().identifier, (requests, error) -> runOnUiThread(() -> {
+            if (error != null) { toast("No se pudieron cargar solicitudes: " + error.getMessage()); return; }
+            if (requests.isEmpty()) { toast("No hay solicitudes pendientes"); return; }
+            String[] items = new String[requests.size()];
+            for (int i = 0; i < requests.size(); i++) items[i] = requests.get(i).driverName + " quiere entrar como Taxi " + requests.get(i).taxiNumber;
+            new AlertDialog.Builder(this).setTitle("Solicitudes pendientes").setItems(items, (dialog, which) -> showApproveDialog(requests.get(which))).show();
+        }));
+    }
+
+    private void showApproveDialog(AccessRequest request) {
+        new AlertDialog.Builder(this)
+                .setTitle(request.driverName)
+                .setMessage("Quiere entrar como Taxi " + request.taxiNumber + ". ¿Autorizar acceso a la empresa?")
+                .setPositiveButton("Aprobar", (d, w) -> api.approveRequest(request.id, true, (ok, error) -> runOnUiThread(() -> toast(error == null ? "Conductor aprobado" : error.getMessage()))))
+                .setNegativeButton("Rechazar", (d, w) -> api.approveRequest(request.id, false, (ok, error) -> runOnUiThread(() -> toast(error == null ? "Solicitud rechazada" : error.getMessage()))))
+                .setNeutralButton("Cancelar", null)
+                .show();
+    }
+
+    private void startRealGpsUpdates() {
+        if (!PermissionHelper.hasLocation(this)) {
+            PermissionHelper.requestNeededPermissions(this);
+            if (taxiInfoText != null) taxiInfoText.setText("Permiso de ubicación necesario para GPS real");
+            return;
+        }
+        try {
+            LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+            if (liveLocationListener != null) lm.removeUpdates(liveLocationListener);
+            liveLocationListener = new LocationListener() {
+                @Override public void onLocationChanged(Location loc) {
+                    int speed = Math.max(0, Math.round(loc.getSpeed() * 3.6f));
+                    String direction = loc.hasBearing() ? directionFromBearing(loc.getBearing()) : "--";
+                    selectedTaxi = new Taxi(safeTaxiNumber(), true, speed, direction, loc.getLatitude(), loc.getLongitude(), now());
+                    selectedTaxi.driverName = session.getDriverName();
+                    if (taxiTitleText != null) taxiTitleText.setText(selectedTaxi.name());
+                    if (taxiInfoText != null) taxiInfoText.setText(speed + " km/h  ·  " + direction + "  ·  Actualizado " + now());
+                    updateUserMarker(loc.getLatitude(), loc.getLongitude());
+                    updateTaxiMarker(selectedTaxi);
+                    api.sendLocation(selectedTaxi.number, session.getDriverName(), loc.getLatitude(), loc.getLongitude(), speed, direction, (ok, error) -> { });
+                }
+                @Override public void onStatusChanged(String p, int s, Bundle e) {}
+                @Override public void onProviderEnabled(String p) {}
+                @Override public void onProviderDisabled(String p) { runOnUiThread(() -> toast("Activa el GPS para ubicación real")); }
+            };
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5000, 5, liveLocationListener);
+            lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 8000, 10, liveLocationListener);
+        } catch (Exception e) {
+            if (taxiInfoText != null) taxiInfoText.setText("GPS no disponible: " + e.getMessage());
+        }
+    }
+
+    private void startTaxiPolling() {
+        if (taxiPoller != null) handler.removeCallbacks(taxiPoller);
+        taxiPoller = new Runnable() {
+            @Override public void run() {
+                api.getTaxis(session.getCompany().identifier, (taxis, error) -> runOnUiThread(() -> {
+                    if (error == null && mapView != null) {
+                        for (Taxi taxi : taxis) {
+                            updateTaxiMarker(taxi);
+                        }
+                    }
+                }));
+                handler.postDelayed(this, 7000);
+            }
+        };
+        handler.postDelayed(taxiPoller, 2000);
+    }
+
+    private void updateUserMarker(double latitude, double longitude) {
+        if (mapView == null) return;
+        GeoPoint point = new GeoPoint(latitude, longitude);
+        if (userMarker == null) {
+            userMarker = new Marker(mapView);
+            userMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            userMarker.setTitle("Tu ubicación");
+            mapView.getOverlays().add(userMarker);
+        }
+        userMarker.setPosition(point);
+        mapView.getController().animateTo(point);
+        mapView.invalidate();
+    }
+
+    private void updateTaxiMarker(Taxi taxi) {
+        if (mapView == null || taxi.latitude == 0 || taxi.longitude == 0) return;
+        Marker marker = taxiMarkers.get(taxi.number);
+        if (marker == null) {
+            marker = new Marker(mapView);
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            taxiMarkers.put(taxi.number, marker);
+            mapView.getOverlays().add(marker);
+        }
+        marker.setPosition(new GeoPoint(taxi.latitude, taxi.longitude));
+        marker.setTitle("🚕 Taxi " + taxi.number + " · " + taxi.driverName);
+        marker.setSnippet((taxi.online ? "En línea" : "Fuera de línea") + " · " + taxi.speed + " km/h · " + taxi.direction);
+        mapView.invalidate();
+    }
+
+    private String directionFromBearing(float bearing) {
+        String[] dirs = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};
+        return dirs[Math.round(bearing / 45f) % 8];
+    }
+
+    private String js(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private View taxiIllustration() {
+        FrameLayout f = new FrameLayout(this); f.setPadding(0, dp(26), 0, dp(10));
+        TextView road = text("━━━━━━━", 50, Color.WHITE, true); road.setAlpha(.18f); road.setGravity(Gravity.CENTER); f.addView(road, match());
+        TextView car = text("🚕", 88, YELLOW, true); car.setGravity(Gravity.CENTER); f.addView(car, match());
+        return f;
+    }
+
+    private TextView subtitle(String s) { TextView t = text(s, 14, SECONDARY, false); t.setPadding(dp(22), dp(10), dp(22), 0); return t; }
+    private LinearLayout column() { LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l; }
+    private LinearLayout row() { LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.HORIZONTAL); return l; }
+    private ScrollView scroll(View v) { ScrollView s = new ScrollView(this); s.setBackgroundColor(BG); s.addView(v); return s; }
+    private LinearLayout card() { LinearLayout c = column(); c.setPadding(dp(18), dp(18), dp(18), dp(18)); c.setBackgroundResource(R.drawable.bg_card); c.setElevation(dp(3)); return c; }
+    private LinearLayout.LayoutParams cardLp() { LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(dp(20), dp(18), dp(20), dp(20)); return lp; }
+    private TextView text(String s, int sp, int color, boolean bold) { TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t; }
+    private TextView circleText(String s, int bg, int color, int size) { TextView t = text(s, size > 60 ? 28 : 20, color, true); t.setGravity(Gravity.CENTER); t.setBackground(round(bg, size / 2, 0, bg)); t.setLayoutParams(new LinearLayout.LayoutParams(dp(size), dp(size))); return t; }
+    private EditText field(String label, String hint, boolean password) { EditText e = new EditText(this); e.setHint(hint); e.setTextColor(TEXT); e.setHintTextColor(SECONDARY); e.setTextSize(15); e.setSingleLine(true); e.setBackgroundResource(R.drawable.bg_field); e.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_CLASS_TEXT); return e; }
+    private Button button(String s, int bg, int color) { Button b = new Button(this); b.setText(s); b.setTextColor(color); b.setTextSize(16); b.setTypeface(Typeface.DEFAULT, Typeface.BOLD); b.setAllCaps(false); b.setBackground(round(bg, 18, 0, bg)); return b; }
+    private Button roundSmallButton(String s, int bg, int color) { Button b = button(s, bg, color); b.setTextSize(20); b.setLayoutParams(new LinearLayout.LayoutParams(dp(58), dp(58))); return b; }
+    private android.graphics.drawable.GradientDrawable round(int color, int radius, int stroke, int strokeColor) { android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable(); g.setColor(color); g.setCornerRadius(dp(radius)); if (stroke > 0) g.setStroke(dp(stroke), strokeColor); return g; }
+    private boolean empty(EditText e) { return e.getText().toString().trim().isEmpty(); }
+    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+    private String now() { return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()); }
+    private int safeTaxiNumber() { try { return Integer.parseInt(session.getTaxiNumber()); } catch (Exception e) { return 3; } }
+    private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density + .5f); }
+    private LinearLayout.LayoutParams matchH(int h) { return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(h)); }
+    private LinearLayout.LayoutParams matchHMT(int h, int mt) { LinearLayout.LayoutParams lp = matchH(h); lp.setMargins(0, dp(mt), 0, 0); return lp; }
+    private LinearLayout.LayoutParams matchWMT(int mt) { LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(0, dp(mt), 0, 0); return lp; }
+    private LinearLayout.LayoutParams mt(int mt) { LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(0, dp(mt), 0, 0); return lp; }
+    private LinearLayout.LayoutParams wrapMT(int mt) { LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.setMargins(0, dp(mt), 0, 0); return lp; }
+    private FrameLayout.LayoutParams match() { return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT); }
+}
