@@ -26,9 +26,11 @@ import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Space;
+import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ArrayAdapter;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -68,7 +70,9 @@ public class MainActivity extends android.app.Activity {
     private LocationListener liveLocationListener;
     private Runnable taxiPoller;
     private Runnable walkiePoller;
+    private Runnable chatPoller;
     private boolean localSpeaking;
+    private LinearLayout chatList;
     private TextView taxiTitleText;
     private TextView taxiInfoText;
 
@@ -328,7 +332,7 @@ public class MainActivity extends android.app.Activity {
         });
         LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(dp(82), dp(70)); mlp.setMargins(dp(22), 0, dp(22), 0);
         controls.addView(micButton, mlp);
-        Button chat = roundSmallButton("💬", NAVY, Color.WHITE); chat.setOnClickListener(v -> toast("Chat local preparado para futura conexión"));
+        Button chat = roundSmallButton("💬", NAVY, Color.WHITE); chat.setOnClickListener(v -> showChatScreen());
         controls.addView(chat);
         panel.addView(controls);
         walkieLabel = text("Walkie listo", 14, TEAL, true); walkieLabel.setGravity(Gravity.CENTER); walkieLabel.setBackground(round(Color.rgb(232, 249, 247), 18, 1, TEAL));
@@ -410,6 +414,163 @@ public class MainActivity extends android.app.Activity {
         setContentView(frame);
     }
 
+    public void showChatScreen() {
+        LinearLayout root = baseWithHeader("Chats", "☰", false, null);
+        root.addView(subtitle(session.getCompany().name));
+        chatList = column();
+        chatList.setPadding(dp(16), dp(8), dp(16), dp(86));
+        root.addView(chatList, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(BG);
+        frame.addView(scroll(root), match());
+
+        LinearLayout inputBar = row();
+        inputBar.setGravity(Gravity.CENTER_VERTICAL);
+        inputBar.setPadding(dp(10), dp(8), dp(10), dp(8));
+        inputBar.setBackgroundColor(Color.WHITE);
+        Button plus = button("+", YELLOW, NAVY);
+        plus.setTextSize(24);
+        plus.setOnClickListener(v -> showServiceOptionsDialog());
+        inputBar.addView(plus, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        EditText input = field("Mensaje", "Escribe un mensaje", false);
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(0, dp(52), 1);
+        inputLp.setMargins(dp(8), 0, dp(8), 0);
+        inputBar.addView(input, inputLp);
+        Button send = button("Enviar", TEAL, Color.WHITE);
+        send.setTextSize(13);
+        send.setOnClickListener(v -> {
+            String text = input.getText().toString().trim();
+            if (text.isEmpty()) return;
+            send.setEnabled(false);
+            api.sendMessage(text, (ok, error) -> runOnUiThread(() -> {
+                send.setEnabled(true);
+                if (error != null) toast("No se pudo enviar: " + error.getMessage());
+                else { input.setText(""); loadChatMessages(); }
+            }));
+        });
+        inputBar.addView(send, new LinearLayout.LayoutParams(dp(76), dp(52)));
+        frame.addView(inputBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(72), Gravity.BOTTOM));
+        setContentView(frame);
+        loadChatMessages();
+        startChatPolling();
+    }
+
+    private void loadChatMessages() {
+        api.getMessages((messages, error) -> runOnUiThread(() -> {
+            if (chatList == null) return;
+            if (error != null) { toast("Chat sin conexión: " + error.getMessage()); return; }
+            chatList.removeAllViews();
+            if (messages.isEmpty()) {
+                TextView empty = text("No hay mensajes todavía. Pulsa + para añadir un servicio o escribe un mensaje.", 15, SECONDARY, false);
+                empty.setGravity(Gravity.CENTER);
+                empty.setPadding(dp(14), dp(28), dp(14), dp(28));
+                chatList.addView(empty);
+                return;
+            }
+            for (ChatMessage message : messages) chatList.addView(messageBubble(message));
+        }));
+    }
+
+    private View messageBubble(ChatMessage message) {
+        LinearLayout bubble = column();
+        bubble.setPadding(dp(14), dp(12), dp(14), dp(12));
+        bubble.setBackground(round("service".equals(message.type) ? Color.rgb(255, 250, 225) : Color.WHITE, 18, 1, "service".equals(message.type) ? YELLOW : Color.rgb(230, 232, 235)));
+        bubble.setElevation(dp(2));
+        bubble.addView(text(message.sender + " · " + message.role, 13, SECONDARY, true));
+        if ("service".equals(message.type)) {
+            bubble.addView(text("🚕 Nuevo servicio", 18, NAVY, true), wrapMT(6));
+            bubble.addView(text("Servicio: " + message.serviceType, 14, TEXT, false), wrapMT(4));
+            bubble.addView(text("Tarifa: " + message.tariff, 14, TEXT, false), wrapMT(3));
+            bubble.addView(text("Recoger: " + message.pickup, 14, TEXT, false), wrapMT(3));
+            bubble.addView(text("Dejar: " + message.destination, 14, TEXT, false), wrapMT(3));
+            bubble.addView(text(message.fixedPrice ? "Precio cerrado" + (message.estimatedPrice == null || message.estimatedPrice.isEmpty() ? "" : ": " + message.estimatedPrice + " €") : "Precio por taxímetro", 14, TEAL, true), wrapMT(5));
+        } else {
+            bubble.addView(text(message.text, 16, TEXT, false), wrapMT(5));
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(8), 0, 0);
+        bubble.setLayoutParams(lp);
+        return bubble;
+    }
+
+    private void startChatPolling() {
+        if (chatPoller != null) handler.removeCallbacks(chatPoller);
+        chatPoller = new Runnable() {
+            @Override public void run() {
+                if (chatList != null) loadChatMessages();
+                handler.postDelayed(this, 5000);
+            }
+        };
+        handler.postDelayed(chatPoller, 5000);
+    }
+
+    private void showServiceOptionsDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Añadir")
+                .setItems(new String[]{"Añadir servicio nuevo"}, (dialog, which) -> showNewServiceScreen())
+                .show();
+    }
+
+    public void showNewServiceScreen() {
+        LinearLayout root = baseWithHeader("Nuevo servicio", "←", true, () -> showChatScreen());
+        TextView sub = text("Configura el trayecto y la tarifa", 16, Color.WHITE, false);
+        sub.setGravity(Gravity.CENTER);
+        LinearLayout hero = column();
+        hero.setGravity(Gravity.CENTER_HORIZONTAL);
+        hero.setPadding(dp(20), dp(18), dp(20), 0);
+        hero.setBackgroundColor(NAVY_DARK);
+        hero.addView(circleText("🚕", YELLOW, NAVY, 76));
+        root.addView(hero);
+
+        LinearLayout card = card();
+        TextView serviceLabel = text("Servicio", 15, NAVY, true);
+        card.addView(serviceLabel);
+        Spinner serviceType = spinner(new String[]{"Taxi urbano", "Taxi aeropuerto", "Taxi adaptado", "Servicio empresa"});
+        card.addView(serviceType, matchHMT(58, 8));
+        card.addView(text("Tarifa de Cataluña", 15, NAVY, true), wrapMT(18));
+        Spinner tariff = spinner(new String[]{"Tarifa 1", "Tarifa 2", "Tarifa 3", "Tarifa aeropuerto"});
+        card.addView(tariff, matchHMT(58, 8));
+        card.addView(text("Recoger al cliente en", 15, NAVY, true), wrapMT(18));
+        EditText pickup = field("Recoger al cliente en", "Carrer de Mallorca, Barcelona", false);
+        card.addView(pickup, matchHMT(58, 8));
+        card.addView(text("Dejar al cliente en", 15, NAVY, true), wrapMT(18));
+        EditText destination = field("Dejar al cliente en", "Estació de Sants", false);
+        card.addView(destination, matchHMT(58, 8));
+        CheckBox fixed = new CheckBox(this);
+        fixed.setText("Precio cerrado");
+        fixed.setTextColor(NAVY);
+        fixed.setTextSize(16);
+        card.addView(fixed, mt(14));
+        EditText price = field("Precio cerrado", "Ej. 25", false);
+        price.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        price.setVisibility(View.GONE);
+        fixed.setOnCheckedChangeListener((buttonView, isChecked) -> price.setVisibility(isChecked ? View.VISIBLE : View.GONE));
+        card.addView(price, matchHMT(58, 8));
+        Button send = button("Enviar servicio", TEAL, Color.WHITE);
+        send.setTextSize(20);
+        send.setOnClickListener(v -> {
+            if (empty(pickup) || empty(destination)) { toast("Indica recogida y destino"); return; }
+            send.setEnabled(false);
+            api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickup.getText().toString().trim(), destination.getText().toString().trim(), fixed.isChecked(), price.getText().toString().trim(), (ok, error) -> runOnUiThread(() -> {
+                send.setEnabled(true);
+                if (error != null) toast("No se pudo enviar servicio: " + error.getMessage());
+                else { toast("Servicio enviado al chat"); showChatScreen(); }
+            }));
+        });
+        card.addView(send, matchHMT(64, 20));
+        Button calc = button("Calcular", Color.WHITE, TEAL);
+        calc.setBackground(round(Color.WHITE, 16, 1, TEAL));
+        calc.setOnClickListener(v -> {
+            if (!fixed.isChecked()) fixed.setChecked(true);
+            if (price.getText().toString().trim().isEmpty()) price.setText("25");
+            toast("Precio estimado calculado");
+        });
+        card.addView(calc, matchHMT(58, 12));
+        root.addView(card, cardLp());
+        setContentView(scroll(root));
+    }
+
     public void showProfileSettingsScreen() {
         LinearLayout root = baseWithHeader("Perfil y configuración", "←", false, null);
         LinearLayout profile = card(); profile.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -480,7 +641,7 @@ public class MainActivity extends android.app.Activity {
 
     private LinearLayout bottomNav(String active) {
         LinearLayout nav = row(); nav.setGravity(Gravity.CENTER); nav.setPadding(dp(4), dp(8), dp(4), dp(8)); nav.setBackgroundColor(Color.WHITE); nav.setElevation(dp(8));
-        addNav(nav, "Mapa", "⌖", active, () -> showMapScreen()); addNav(nav, "Taxis", "🚕", active, () -> showTaxiListScreen()); addNav(nav, "", "🎙", active, () -> toast("Mantén pulsado el micrófono en el mapa")); addNav(nav, "Chats", "💬", active, () -> toast("Chats preparados para backend")); addNav(nav, "Más", "☰", active, () -> showProfileSettingsScreen());
+        addNav(nav, "Mapa", "⌖", active, () -> showMapScreen()); addNav(nav, "Taxis", "🚕", active, () -> showTaxiListScreen()); addNav(nav, "", "🎙", active, () -> toast("Mantén pulsado el micrófono en el mapa")); addNav(nav, "Chats", "💬", active, () -> showChatScreen()); addNav(nav, "Más", "☰", active, () -> showProfileSettingsScreen());
         return nav;
     }
 
@@ -641,6 +802,7 @@ public class MainActivity extends android.app.Activity {
     private TextView text(String s, int sp, int color, boolean bold) { TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t; }
     private TextView circleText(String s, int bg, int color, int size) { TextView t = text(s, size > 60 ? 28 : 20, color, true); t.setGravity(Gravity.CENTER); t.setBackground(round(bg, size / 2, 0, bg)); t.setLayoutParams(new LinearLayout.LayoutParams(dp(size), dp(size))); return t; }
     private EditText field(String label, String hint, boolean password) { EditText e = new EditText(this); e.setHint(hint); e.setTextColor(TEXT); e.setHintTextColor(SECONDARY); e.setTextSize(15); e.setSingleLine(true); e.setBackgroundResource(R.drawable.bg_field); e.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_CLASS_TEXT); return e; }
+    private Spinner spinner(String[] values) { Spinner s = new Spinner(this); ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values); adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); s.setAdapter(adapter); s.setBackgroundResource(R.drawable.bg_field); return s; }
     private Button button(String s, int bg, int color) { Button b = new Button(this); b.setText(s); b.setTextColor(color); b.setTextSize(16); b.setTypeface(Typeface.DEFAULT, Typeface.BOLD); b.setAllCaps(false); b.setBackground(round(bg, 18, 0, bg)); return b; }
     private Button roundSmallButton(String s, int bg, int color) { Button b = button(s, bg, color); b.setTextSize(20); b.setLayoutParams(new LinearLayout.LayoutParams(dp(58), dp(58))); return b; }
     private android.graphics.drawable.GradientDrawable round(int color, int radius, int stroke, int strokeColor) { android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable(); g.setColor(color); g.setCornerRadius(dp(radius)); if (stroke > 0) g.setStroke(dp(stroke), strokeColor); return g; }

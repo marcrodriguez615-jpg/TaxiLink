@@ -20,6 +20,7 @@ const accessRequests = data.accessRequests;
 const taxis = data.taxis;
 const history = data.history;
 const walkieStates = data.walkieStates || [];
+const messages = data.messages || [];
 
 function loadData() {
   try {
@@ -32,13 +33,14 @@ function loadData() {
     accessRequests: [],
     taxis: [],
     history: [],
-    walkieStates: []
+    walkieStates: [],
+    messages: []
   };
 }
 
 function saveData() {
   try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ companies, accessRequests, taxis, history, walkieStates }, null, 2));
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ companies, accessRequests, taxis, history, walkieStates, messages }, null, 2));
   } catch (error) {
     console.warn('No se pudo guardar data.json:', error.message);
   }
@@ -159,6 +161,42 @@ app.post('/taxis/:number/location', (req, res) => {
 });
 
 app.get('/history', (req, res) => res.json({ history }));
+
+app.get('/messages', (req, res) => {
+  const identifier = req.query.identifier;
+  const visible = messages.filter(m => !identifier || m.identifier === identifier).slice(-100);
+  res.json({ messages: visible });
+});
+
+app.post('/messages', (req, res) => {
+  const { identifier, sender, role, text } = req.body;
+  if (!identifier || !sender || !text) return res.status(400).json({ error: 'Faltan datos del mensaje' });
+  const message = { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, identifier, sender, role: role || 'Usuario', type: 'text', text, createdAt: new Date().toISOString() };
+  messages.push(message);
+  saveData();
+  broadcast('message', message);
+  res.status(201).json({ message });
+});
+
+app.post('/services', (req, res) => {
+  const { identifier, sender, role, serviceType, tariff, pickup, destination, fixedPrice, estimatedPrice } = req.body;
+  if (!identifier || !sender || !serviceType || !tariff || !pickup || !destination) return res.status(400).json({ error: 'Faltan datos del servicio' });
+  const service = { serviceType, tariff, pickup, destination, fixedPrice: !!fixedPrice, estimatedPrice: estimatedPrice || '' };
+  const message = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    identifier,
+    sender,
+    role: role || 'Usuario',
+    type: 'service',
+    text: `Nuevo servicio: ${pickup} → ${destination}`,
+    service,
+    createdAt: new Date().toISOString()
+  };
+  messages.push(message);
+  saveData();
+  broadcast('service', message);
+  res.status(201).json({ message });
+});
 
 app.post('/walkie/start', (req, res) => {
   const { identifier, taxiNumber, driverName } = req.body;

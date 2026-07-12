@@ -156,6 +156,68 @@ public class TaxiLinkApi {
         });
     }
 
+    public void getMessages(Callback<List<ChatMessage>> callback) {
+        run(callback, () -> {
+            JSONObject response = request("GET", "/messages?identifier=" + session.getCompany().identifier, null);
+            JSONArray array = response.getJSONArray("messages");
+            List<ChatMessage> result = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject o = array.getJSONObject(i);
+                ChatMessage m = new ChatMessage();
+                m.id = o.optString("id");
+                m.sender = o.optString("sender");
+                m.role = o.optString("role");
+                m.type = o.optString("type", "text");
+                m.text = o.optString("text");
+                m.createdAt = o.optString("createdAt");
+                if (o.has("service")) {
+                    JSONObject s = o.getJSONObject("service");
+                    m.serviceType = s.optString("serviceType");
+                    m.tariff = s.optString("tariff");
+                    m.pickup = s.optString("pickup");
+                    m.destination = s.optString("destination");
+                    m.fixedPrice = s.optBoolean("fixedPrice");
+                    m.estimatedPrice = s.optString("estimatedPrice");
+                }
+                result.add(m);
+            }
+            return result;
+        });
+    }
+
+    public void sendMessage(String text, Callback<Boolean> callback) {
+        run(callback, () -> {
+            JSONObject body = new JSONObject();
+            body.put("identifier", session.getCompany().identifier);
+            body.put("sender", senderName());
+            body.put("role", session.getRole());
+            body.put("text", text);
+            request("POST", "/messages", body);
+            return true;
+        });
+    }
+
+    public void sendService(String serviceType, String tariff, String pickup, String destination, boolean fixedPrice, String estimatedPrice, Callback<Boolean> callback) {
+        run(callback, () -> {
+            JSONObject body = new JSONObject();
+            body.put("identifier", session.getCompany().identifier);
+            body.put("sender", senderName());
+            body.put("role", session.getRole());
+            body.put("serviceType", serviceType);
+            body.put("tariff", tariff);
+            body.put("pickup", pickup);
+            body.put("destination", destination);
+            body.put("fixedPrice", fixedPrice);
+            body.put("estimatedPrice", estimatedPrice);
+            request("POST", "/services", body);
+            return true;
+        });
+    }
+
+    private String senderName() {
+        return "Propietario".equals(session.getRole()) ? "Propietario" : session.getDriverName();
+    }
+
     private interface Work<T> { T execute() throws Exception; }
 
     private <T> void run(Callback<T> callback, Work<T> work) {
