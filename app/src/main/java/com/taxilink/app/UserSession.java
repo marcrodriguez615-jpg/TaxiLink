@@ -17,6 +17,7 @@ public class UserSession {
                 .putString("company_id", company.identifier)
                 .putString("company_password", company.password)
                 .putString("owner_password", company.ownerPassword)
+                .putString("central_number", company.centralNumber)
                 .putString("role", "Propietario")
                 .putBoolean("logged_in", true)
                 .apply();
@@ -27,12 +28,14 @@ public class UserSession {
         String id = prefs.getString("company_id", "central");
         String pass = prefs.getString("company_password", "123456");
         String ownerPass = prefs.getString("owner_password", pass);
-        return new Company(name, id, pass, ownerPass);
+        String central = prefs.getString("central_number", "00000000000000000");
+        return new Company(name, id, pass, ownerPass, central);
     }
 
     public void saveDriverLogin(String companyId, String taxiNumber, boolean remember) {
         SharedPreferences.Editor editor = prefs.edit()
                 .putString("company_id", companyId)
+                .putString("central_number", companyId)
                 .putString("taxi_number", taxiNumber)
                 .putString("role", "Conductor")
                 .putBoolean("logged_in", true)
@@ -77,6 +80,10 @@ public class UserSession {
 
     public String getRequestId() {
         return prefs.getString("request_id", "");
+    }
+
+    public String getCentralNumber() {
+        return prefs.getString("central_number", "00000000000000000");
     }
 
     public String getServerUrl() {

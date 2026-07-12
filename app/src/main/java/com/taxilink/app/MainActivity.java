@@ -39,6 +39,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
@@ -172,11 +173,13 @@ public class MainActivity extends android.app.Activity {
                 toast("Completa los campos. Las contraseñas deben tener mínimo 6 caracteres.");
                 return;
             }
-            Company company = new Company(name.getText().toString().trim(), id.getText().toString().trim(), pass.getText().toString().trim(), ownerPass.getText().toString().trim());
+            String centralNumber = generateCentralNumber();
+            Company company = new Company(name.getText().toString().trim(), id.getText().toString().trim(), pass.getText().toString().trim(), ownerPass.getText().toString().trim(), centralNumber);
             session.saveCompany(company);
             api.createCompany(company, (ok, error) -> runOnUiThread(() -> {
                 if (error != null) toast("Empresa guardada localmente. Backend no conectado: " + error.getMessage());
                 else toast("Empresa creada y conectada al backend");
+                new AlertDialog.Builder(this).setTitle("Número de central").setMessage("Guarda este número. Conductores y propietario lo usarán para iniciar sesión:\n\n" + centralNumber).setPositiveButton("Entendido", null).show();
                 showOwnerPanel();
             }));
         });
@@ -192,7 +195,7 @@ public class MainActivity extends android.app.Activity {
         root.addView(sub);
         LinearLayout card = card();
         EditText driverName = field("Nombre del conductor", "Ej. Aritz", false);
-        EditText company = field("Identificador de empresa", "central", false);
+        EditText company = field("Número de central", "17 dígitos", false);
         company.setText(session.getRememberCompany());
         EditText pass = field("Contraseña", "Contraseña de empresa", true);
         EditText taxi = field("Número de taxi", "Ej. 3", false);
@@ -205,6 +208,7 @@ public class MainActivity extends android.app.Activity {
         Button enter = button("Entrar", TEAL, Color.WHITE);
         enter.setOnClickListener(v -> {
             if (empty(driverName) || empty(company) || empty(pass) || empty(taxi)) { toast("Todos los campos son obligatorios"); return; }
+            if (company.getText().toString().trim().length() != 17) { toast("El número de central debe tener 17 dígitos"); return; }
             enter.setEnabled(false);
             enter.setText("Solicitando acceso...");
             api.requestAccess(company.getText().toString().trim(), pass.getText().toString().trim(), taxi.getText().toString().trim(), driverName.getText().toString().trim(), (requestId, error) -> runOnUiThread(() -> {
@@ -219,7 +223,8 @@ public class MainActivity extends android.app.Activity {
         card.addView(enter, matchHMT(54, 18));
         Button ownerEnter = button("Entrar como propietario", NAVY, Color.WHITE);
         ownerEnter.setOnClickListener(v -> {
-            if (empty(company) || empty(pass)) { toast("Indica empresa y contraseña de propietario"); return; }
+            if (empty(company) || empty(pass)) { toast("Indica número de central y contraseña de propietario"); return; }
+            if (company.getText().toString().trim().length() != 17) { toast("El número de central debe tener 17 dígitos"); return; }
             ownerEnter.setEnabled(false);
             ownerEnter.setText("Validando propietario...");
             api.ownerLogin(company.getText().toString().trim(), pass.getText().toString().trim(), (companyName, error) -> runOnUiThread(() -> {
@@ -234,7 +239,7 @@ public class MainActivity extends android.app.Activity {
                     return;
                 }
                 Company current = session.getCompany();
-                session.saveCompany(new Company(companyName, company.getText().toString().trim(), current.password, pass.getText().toString().trim()));
+                session.saveCompany(new Company(companyName, company.getText().toString().trim(), current.password, pass.getText().toString().trim(), company.getText().toString().trim()));
                 showOwnerPanel();
             }));
         });
@@ -364,6 +369,9 @@ public class MainActivity extends android.app.Activity {
         session.setRole("Propietario");
         LinearLayout root = baseWithHeader("Panel propietario", "☰", false, null);
         root.addView(subtitle(session.getCompany().name));
+        TextView central = text("Número de central: " + session.getCentralNumber(), 15, YELLOW, true);
+        central.setPadding(dp(22), dp(8), dp(22), 0);
+        root.addView(central);
         TextView serverInfo = text("Conectado al servidor central TaxiLink\nLos conductores pueden conectarse desde cualquier red con Internet.", 14, TEAL, true);
         serverInfo.setPadding(dp(22), dp(10), dp(22), dp(4));
         root.addView(serverInfo);
@@ -379,6 +387,12 @@ public class MainActivity extends android.app.Activity {
         LinearLayout.LayoutParams logoutLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
         logoutLp.setMargins(dp(18), dp(18), dp(18), dp(24));
         root.addView(logout, logoutLp);
+        Button delete = button("Eliminar empresa", Color.WHITE, DANGER);
+        delete.setBackground(round(Color.WHITE, 16, 1, DANGER));
+        delete.setOnClickListener(v -> confirmDeleteCompany());
+        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+        deleteLp.setMargins(dp(18), 0, dp(18), dp(28));
+        root.addView(delete, deleteLp);
         setContentView(scroll(root));
     }
 
@@ -405,7 +419,7 @@ public class MainActivity extends android.app.Activity {
         };
         search.addTextChangedListener(new android.text.TextWatcher() { public void beforeTextChanged(CharSequence s, int st, int c, int a) {} public void onTextChanged(CharSequence s, int st, int b, int c) { render[0].run(); } public void afterTextChanged(android.text.Editable e) {} });
         render[0].run();
-        api.getTaxis(session.getCompany().identifier, (taxis, error) -> runOnUiThread(() -> {
+        api.getTaxis(session.getCentralNumber(), (taxis, error) -> runOnUiThread(() -> {
             if (error != null) toast("No se pudo cargar la flota real: " + error.getMessage());
             else { liveTaxis.clear(); liveTaxis.addAll(taxis); render[0].run(); }
         }));
@@ -665,7 +679,7 @@ public class MainActivity extends android.app.Activity {
     }
 
     private void showPendingRequestsDialog() {
-        api.getPendingRequests(session.getCompany().identifier, (requests, error) -> runOnUiThread(() -> {
+        api.getPendingRequests(session.getCentralNumber(), (requests, error) -> runOnUiThread(() -> {
             if (error != null) { toast("No se pudieron cargar solicitudes: " + error.getMessage()); return; }
             if (requests.isEmpty()) { toast("No hay solicitudes pendientes"); return; }
             String[] items = new String[requests.size()];
@@ -681,6 +695,20 @@ public class MainActivity extends android.app.Activity {
                 .setPositiveButton("Aprobar", (d, w) -> api.approveRequest(request.id, true, (ok, error) -> runOnUiThread(() -> toast(error == null ? "Conductor aprobado" : error.getMessage()))))
                 .setNegativeButton("Rechazar", (d, w) -> api.approveRequest(request.id, false, (ok, error) -> runOnUiThread(() -> toast(error == null ? "Solicitud rechazada" : error.getMessage()))))
                 .setNeutralButton("Cancelar", null)
+                .show();
+    }
+
+    private void confirmDeleteCompany() {
+        new AlertDialog.Builder(this)
+                .setTitle("Eliminar empresa")
+                .setMessage("Se eliminará la empresa de Firebase. Esta acción no se puede deshacer.")
+                .setPositiveButton("Eliminar", (d, w) -> api.deleteCompany((ok, error) -> runOnUiThread(() -> {
+                    if (error != null) { toast("No se pudo eliminar: " + error.getMessage()); return; }
+                    session.logout();
+                    toast("Empresa eliminada");
+                    showStartScreen();
+                })))
+                .setNegativeButton("Cancelar", null)
                 .show();
     }
 
@@ -720,7 +748,7 @@ public class MainActivity extends android.app.Activity {
         if (taxiPoller != null) handler.removeCallbacks(taxiPoller);
         taxiPoller = new Runnable() {
             @Override public void run() {
-                api.getTaxis(session.getCompany().identifier, (taxis, error) -> runOnUiThread(() -> {
+                api.getTaxis(session.getCentralNumber(), (taxis, error) -> runOnUiThread(() -> {
                     if (error == null && mapView != null) {
                         for (Taxi taxi : taxis) {
                             updateTaxiMarker(taxi);
@@ -784,6 +812,14 @@ public class MainActivity extends android.app.Activity {
 
     private String js(String value) {
         return value == null ? "" : value.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private String generateCentralNumber() {
+        Random random = new Random();
+        StringBuilder sb = new StringBuilder();
+        sb.append(random.nextInt(9) + 1);
+        for (int i = 1; i < 17; i++) sb.append(random.nextInt(10));
+        return sb.toString();
     }
 
     private View taxiIllustration() {

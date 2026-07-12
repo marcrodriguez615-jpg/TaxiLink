@@ -3,28 +3,26 @@ package com.taxilink.app;
 import android.content.Context;
 import android.provider.Settings;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
+import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.Query;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class TaxiLinkApi {
     public interface Callback<T> { void onResult(T value, Exception error); }
 
     private final Context context;
     private final UserSession session;
+    private final FirebaseFirestore db;
 
     public TaxiLinkApi(Context context, UserSession session) {
         this.context = context.getApplicationContext();
         this.session = session;
+        this.db = FirebaseFirestore.getInstance();
     }
 
     public String deviceId() {
@@ -32,231 +30,199 @@ public class TaxiLinkApi {
     }
 
     public String baseUrl() {
-        return session.getServerUrl();
+        return "Firebase Firestore";
     }
 
     public void createCompany(Company company, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("name", company.name);
-            body.put("identifier", company.identifier);
-            body.put("password", company.password);
-            body.put("ownerPassword", company.ownerPassword);
-            request("POST", "/companies", body);
-            return true;
-        });
+        Map<String, Object> data = new HashMap<>();
+        data.put("name", company.name);
+        data.put("identifier", company.identifier);
+        data.put("password", company.password);
+        data.put("ownerPassword", company.ownerPassword);
+        data.put("centralNumber", company.centralNumber);
+        data.put("createdAt", System.currentTimeMillis());
+        db.collection("companies").document(company.centralNumber).set(data)
+                .addOnSuccessListener(v -> callback.onResult(true, null))
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
-    public void ownerLogin(String identifier, String ownerPassword, Callback<String> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", identifier);
-            body.put("ownerPassword", ownerPassword);
-            JSONObject response = request("POST", "/owner-login", body);
-            return response.getJSONObject("company").getString("name");
-        });
+    public void ownerLogin(String centralNumber, String ownerPassword, Callback<String> callback) {
+        db.collection("companies").document(centralNumber).get()
+                .addOnSuccessListener(doc -> {
+                    if (!doc.exists()) { callback.onResult(null, new Exception("La central no existe")); return; }
+                    if (!ownerPassword.equals(doc.getString("ownerPassword"))) { callback.onResult(null, new Exception("Contraseña de propietario incorrecta")); return; }
+                    callback.onResult(doc.getString("name"), null);
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
-    public void requestAccess(String identifier, String password, String taxiNumber, String driverName, Callback<String> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", identifier);
-            body.put("password", password);
-            body.put("taxiNumber", taxiNumber);
-            body.put("driverName", driverName);
-            body.put("deviceId", deviceId());
-            JSONObject response = request("POST", "/access-requests", body);
-            return response.getJSONObject("request").getString("id");
-        });
+    public void requestAccess(String centralNumber, String password, String taxiNumber, String driverName, Callback<String> callback) {
+        db.collection("companies").document(centralNumber).get()
+                .addOnSuccessListener(doc -> {
+                    if (!doc.exists()) { callback.onResult(null, new Exception("La central no existe")); return; }
+                    if (!password.equals(doc.getString("password"))) { callback.onResult(null, new Exception("Contraseña de conductores incorrecta")); return; }
+                    String requestId = centralNumber + "_" + deviceId();
+                    Map<String, Object> req = new HashMap<>();
+                    req.put("id", requestId);
+                    req.put("identifier", centralNumber);
+                    req.put("centralNumber", centralNumber);
+                    req.put("taxiNumber", Integer.parseInt(taxiNumber));
+                    req.put("driverName", driverName);
+                    req.put("deviceId", deviceId());
+                    req.put("status", "pending");
+                    req.put("createdAt", System.currentTimeMillis());
+                    db.collection("companies").document(centralNumber).collection("accessRequests").document(requestId).set(req)
+                            .addOnSuccessListener(v -> callback.onResult(requestId, null))
+                            .addOnFailureListener(e -> callback.onResult(null, e));
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void getRequestStatus(String requestId, Callback<String> callback) {
-        run(callback, () -> request("GET", "/access-requests/" + requestId, null).getJSONObject("request").getString("status"));
+        String central = session.getCentralNumber();
+        db.collection("companies").document(central).collection("accessRequests").document(requestId).get()
+                .addOnSuccessListener(doc -> callback.onResult(doc.exists() ? doc.getString("status") : "pending", null))
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
-    public void getPendingRequests(String identifier, Callback<List<AccessRequest>> callback) {
-        run(callback, () -> {
-            JSONObject response = request("GET", "/access-requests?identifier=" + identifier, null);
-            JSONArray array = response.getJSONArray("requests");
-            List<AccessRequest> requests = new ArrayList<>();
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject o = array.getJSONObject(i);
-                requests.add(new AccessRequest(o.getString("id"), o.getString("driverName"), o.getInt("taxiNumber"), o.getString("createdAt")));
-            }
-            return requests;
-        });
+    public void getPendingRequests(String centralNumber, Callback<List<AccessRequest>> callback) {
+        db.collection("companies").document(centralNumber).collection("accessRequests").whereEqualTo("status", "pending").get()
+                .addOnSuccessListener(q -> {
+                    List<AccessRequest> result = new ArrayList<>();
+                    for (DocumentSnapshot doc : q.getDocuments()) {
+                        Long taxi = doc.getLong("taxiNumber");
+                        result.add(new AccessRequest(doc.getId(), doc.getString("driverName"), taxi == null ? 0 : taxi.intValue(), String.valueOf(doc.getLong("createdAt"))));
+                    }
+                    callback.onResult(result, null);
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void approveRequest(String requestId, boolean approved, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("approved", approved);
-            request("POST", "/access-requests/" + requestId + "/approve", body);
-            return true;
-        });
+        String central = session.getCentralNumber();
+        db.collection("companies").document(central).collection("accessRequests").document(requestId).get()
+                .addOnSuccessListener(doc -> {
+                    if (!doc.exists()) { callback.onResult(null, new Exception("Solicitud no encontrada")); return; }
+                    Map<String, Object> update = new HashMap<>();
+                    update.put("status", approved ? "approved" : "rejected");
+                    update.put("reviewedAt", System.currentTimeMillis());
+                    doc.getReference().update(update);
+                    if (approved) {
+                        Long taxi = doc.getLong("taxiNumber");
+                        Map<String, Object> t = new HashMap<>();
+                        t.put("number", taxi == null ? 0 : taxi.intValue());
+                        t.put("driverName", doc.getString("driverName"));
+                        t.put("online", false);
+                        db.collection("companies").document(central).collection("taxis").document(String.valueOf(t.get("number"))).set(t);
+                    }
+                    callback.onResult(true, null);
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void sendLocation(int taxiNumber, String driverName, double latitude, double longitude, int speed, String direction, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", session.getCompany().identifier);
-            body.put("driverName", driverName);
-            body.put("latitude", latitude);
-            body.put("longitude", longitude);
-            body.put("speed", speed);
-            body.put("direction", direction);
-            request("POST", "/taxis/" + taxiNumber + "/location", body);
-            return true;
-        });
+        String central = session.getCentralNumber();
+        Map<String, Object> data = new HashMap<>();
+        data.put("number", taxiNumber);
+        data.put("driverName", driverName);
+        data.put("latitude", latitude);
+        data.put("longitude", longitude);
+        data.put("speed", speed);
+        data.put("direction", direction);
+        data.put("online", true);
+        data.put("lastUpdate", System.currentTimeMillis());
+        db.collection("companies").document(central).collection("taxis").document(String.valueOf(taxiNumber)).set(data)
+                .addOnSuccessListener(v -> callback.onResult(true, null))
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
-    public void getTaxis(String identifier, Callback<List<Taxi>> callback) {
-        run(callback, () -> {
-            JSONObject response = request("GET", "/taxis?identifier=" + identifier, null);
-            JSONArray array = response.getJSONArray("taxis");
-            List<Taxi> taxis = new ArrayList<>();
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject o = array.getJSONObject(i);
-                if (o.isNull("latitude") || o.isNull("longitude")) continue;
-                Taxi taxi = new Taxi(o.getInt("number"), o.optBoolean("online", false), o.optInt("speed", 0), o.optString("direction", "--"), o.getDouble("latitude"), o.getDouble("longitude"), o.optString("lastUpdate", "--"));
-                taxi.driverName = o.optString("driverName", "Conductor");
-                taxis.add(taxi);
-            }
-            return taxis;
-        });
+    public void getTaxis(String centralNumber, Callback<List<Taxi>> callback) {
+        db.collection("companies").document(centralNumber).collection("taxis").get()
+                .addOnSuccessListener(q -> {
+                    List<Taxi> result = new ArrayList<>();
+                    long now = System.currentTimeMillis();
+                    for (DocumentSnapshot doc : q.getDocuments()) {
+                        Long n = doc.getLong("number"); Long speed = doc.getLong("speed"); Long last = doc.getLong("lastUpdate");
+                        Double lat = doc.getDouble("latitude"); Double lng = doc.getDouble("longitude");
+                        if (n == null || lat == null || lng == null) continue;
+                        boolean online = last != null && now - last < 45000;
+                        Taxi taxi = new Taxi(n.intValue(), online, speed == null ? 0 : speed.intValue(), doc.getString("direction"), lat, lng, last == null ? "--" : String.valueOf(last));
+                        taxi.driverName = doc.getString("driverName");
+                        result.add(taxi);
+                    }
+                    callback.onResult(result, null);
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void startWalkie(int taxiNumber, String driverName, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", session.getCompany().identifier);
-            body.put("taxiNumber", taxiNumber);
-            body.put("driverName", driverName);
-            request("POST", "/walkie/start", body);
-            return true;
-        });
+        Map<String, Object> data = new HashMap<>();
+        data.put("taxiNumber", taxiNumber); data.put("driverName", driverName); data.put("speaking", true); data.put("updatedAt", System.currentTimeMillis());
+        db.collection("companies").document(session.getCentralNumber()).collection("state").document("walkie").set(data)
+                .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void stopWalkie(int taxiNumber, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", session.getCompany().identifier);
-            body.put("taxiNumber", taxiNumber);
-            request("POST", "/walkie/stop", body);
-            return true;
-        });
+        db.collection("companies").document(session.getCentralNumber()).collection("state").document("walkie").update("speaking", false, "updatedAt", System.currentTimeMillis())
+                .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void getWalkieStatus(Callback<String> callback) {
-        run(callback, () -> {
-            JSONObject response = request("GET", "/walkie?identifier=" + session.getCompany().identifier, null);
-            JSONObject walkie = response.getJSONObject("walkie");
-            if (!walkie.optBoolean("speaking", false)) return "Walkie listo";
-            return "Hablando: Taxi " + walkie.optInt("taxiNumber") + " · " + walkie.optString("driverName", "Conductor");
-        });
+        db.collection("companies").document(session.getCentralNumber()).collection("state").document("walkie").get()
+                .addOnSuccessListener(doc -> {
+                    if (!doc.exists() || !Boolean.TRUE.equals(doc.getBoolean("speaking"))) { callback.onResult("Walkie listo", null); return; }
+                    Long updated = doc.getLong("updatedAt");
+                    if (updated == null || System.currentTimeMillis() - updated > 30000) { callback.onResult("Walkie listo", null); return; }
+                    callback.onResult("Hablando: Taxi " + doc.getLong("taxiNumber") + " · " + doc.getString("driverName"), null);
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void getMessages(Callback<List<ChatMessage>> callback) {
-        run(callback, () -> {
-            JSONObject response = request("GET", "/messages?identifier=" + session.getCompany().identifier, null);
-            JSONArray array = response.getJSONArray("messages");
-            List<ChatMessage> result = new ArrayList<>();
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject o = array.getJSONObject(i);
-                ChatMessage m = new ChatMessage();
-                m.id = o.optString("id");
-                m.sender = o.optString("sender");
-                m.role = o.optString("role");
-                m.type = o.optString("type", "text");
-                m.text = o.optString("text");
-                m.createdAt = o.optString("createdAt");
-                if (o.has("service")) {
-                    JSONObject s = o.getJSONObject("service");
-                    m.serviceType = s.optString("serviceType");
-                    m.tariff = s.optString("tariff");
-                    m.pickup = s.optString("pickup");
-                    m.destination = s.optString("destination");
-                    m.fixedPrice = s.optBoolean("fixedPrice");
-                    m.estimatedPrice = s.optString("estimatedPrice");
-                }
-                result.add(m);
-            }
-            return result;
-        });
+        db.collection("companies").document(session.getCentralNumber()).collection("messages").orderBy("createdAt", Query.Direction.ASCENDING).limit(100).get()
+                .addOnSuccessListener(q -> {
+                    List<ChatMessage> result = new ArrayList<>();
+                    for (DocumentSnapshot doc : q.getDocuments()) result.add(toMessage(doc));
+                    callback.onResult(result, null);
+                })
+                .addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void sendMessage(String text, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", session.getCompany().identifier);
-            body.put("sender", senderName());
-            body.put("role", session.getRole());
-            body.put("text", text);
-            request("POST", "/messages", body);
-            return true;
-        });
+        Map<String, Object> data = baseMessage("text", text);
+        db.collection("companies").document(session.getCentralNumber()).collection("messages").add(data)
+                .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
     }
 
     public void sendService(String serviceType, String tariff, String pickup, String destination, boolean fixedPrice, String estimatedPrice, Callback<Boolean> callback) {
-        run(callback, () -> {
-            JSONObject body = new JSONObject();
-            body.put("identifier", session.getCompany().identifier);
-            body.put("sender", senderName());
-            body.put("role", session.getRole());
-            body.put("serviceType", serviceType);
-            body.put("tariff", tariff);
-            body.put("pickup", pickup);
-            body.put("destination", destination);
-            body.put("fixedPrice", fixedPrice);
-            body.put("estimatedPrice", estimatedPrice);
-            request("POST", "/services", body);
-            return true;
-        });
+        Map<String, Object> service = new HashMap<>();
+        service.put("serviceType", serviceType); service.put("tariff", tariff); service.put("pickup", pickup); service.put("destination", destination); service.put("fixedPrice", fixedPrice); service.put("estimatedPrice", estimatedPrice);
+        Map<String, Object> data = baseMessage("service", "Nuevo servicio: " + pickup + " → " + destination);
+        data.put("service", service);
+        db.collection("companies").document(session.getCentralNumber()).collection("messages").add(data)
+                .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
     }
 
-    private String senderName() {
-        return "Propietario".equals(session.getRole()) ? "Propietario" : session.getDriverName();
+    public void deleteCompany(Callback<Boolean> callback) {
+        db.collection("companies").document(session.getCentralNumber()).delete()
+                .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
     }
 
-    private interface Work<T> { T execute() throws Exception; }
-
-    private <T> void run(Callback<T> callback, Work<T> work) {
-        new Thread(() -> {
-            try { callback.onResult(work.execute(), null); }
-            catch (Exception e) { callback.onResult(null, e); }
-        }).start();
+    private Map<String, Object> baseMessage(String type, String text) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("sender", "Propietario".equals(session.getRole()) ? "Propietario" : session.getDriverName());
+        data.put("role", session.getRole());
+        data.put("type", type);
+        data.put("text", text);
+        data.put("createdAt", System.currentTimeMillis());
+        return data;
     }
 
-    private JSONObject request(String method, String path, JSONObject body) throws Exception {
-        URL url = new URL(baseUrl() + path);
-        HttpURLConnection con = (HttpURLConnection) url.openConnection();
-        con.setConnectTimeout(8000);
-        con.setReadTimeout(8000);
-        con.setRequestMethod(method);
-        con.setRequestProperty("Accept", "application/json");
-        if (body != null) {
-            byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-            con.setDoOutput(true);
-            con.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            con.setRequestProperty("Content-Length", String.valueOf(bytes.length));
-            OutputStream os = con.getOutputStream();
-            os.write(bytes);
-            os.close();
-        }
-        int code = con.getResponseCode();
-        InputStream is = code >= 200 && code < 300 ? con.getInputStream() : con.getErrorStream();
-        String text = read(is);
-        if (code < 200 || code >= 300) throw new Exception(text.isEmpty() ? "Error HTTP " + code : text);
-        return text.isEmpty() ? new JSONObject() : new JSONObject(text);
-    }
-
-    private String read(InputStream stream) throws Exception {
-        if (stream == null) return "";
-        BufferedReader br = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) sb.append(line);
-        br.close();
-        return sb.toString();
+    private ChatMessage toMessage(DocumentSnapshot doc) {
+        ChatMessage m = new ChatMessage();
+        m.id = doc.getId(); m.sender = doc.getString("sender"); m.role = doc.getString("role"); m.type = doc.getString("type"); m.text = doc.getString("text"); m.createdAt = String.valueOf(doc.getLong("createdAt"));
+        Map<String, Object> s = (Map<String, Object>) doc.get("service");
+        if (s != null) { m.serviceType = String.valueOf(s.get("serviceType")); m.tariff = String.valueOf(s.get("tariff")); m.pickup = String.valueOf(s.get("pickup")); m.destination = String.valueOf(s.get("destination")); m.fixedPrice = Boolean.TRUE.equals(s.get("fixedPrice")); m.estimatedPrice = String.valueOf(s.get("estimatedPrice")); }
+        return m;
     }
 }
