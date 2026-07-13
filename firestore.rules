@@ -62,8 +62,7 @@ service cloud.firestore {
           && request.resource.data.text is string;
         allow update: if signedIn()
           && resource.data.type == 'service'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['service'])
-          && request.resource.data.service['status'] in ['pending', 'accepted', 'cancelled'];
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['service']);
         allow delete: if isOwner(central);
       }
 
