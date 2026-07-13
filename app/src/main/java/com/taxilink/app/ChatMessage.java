@@ -22,4 +22,7 @@ public class ChatMessage {
     public double destinationLng;
     public String acceptedBy;
     public int acceptedTaxi;
+    public String reservationDate;
+    public String reservationTime;
+    public String reservationColor;
 }

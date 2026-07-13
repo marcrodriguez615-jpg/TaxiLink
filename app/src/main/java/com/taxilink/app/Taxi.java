@@ -9,6 +9,7 @@ public class Taxi {
     public double longitude;
     public String lastUpdate;
     public String driverName;
+    public boolean occupied;
 
     public Taxi(int number, boolean online, int speed, String direction, double latitude, double longitude, String lastUpdate) {
         this.number = number;

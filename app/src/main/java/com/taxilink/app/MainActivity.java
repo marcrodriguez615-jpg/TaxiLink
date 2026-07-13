@@ -50,6 +50,10 @@ import java.util.Random;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
@@ -57,6 +61,8 @@ import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
 import org.osmdroid.views.overlay.Polyline;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class MainActivity extends android.app.Activity {
     private final int NAVY = Color.rgb(6, 26, 46);
@@ -407,6 +413,7 @@ public class MainActivity extends android.app.Activity {
         root.addView(ownerAction("👑", "Cambiar contraseña propietario", "Actualiza la clave única del dueño", () -> showChangePasswordDialog(true)));
         root.addView(ownerAction("🕓", "Historial de conexiones", "Revisa los inicios de sesión", () -> showHistoryDialog()));
         root.addView(ownerAction("📋", "Vehículos registrados", "Ver listado de vehículos en la flota", () -> showTaxiListScreen()));
+        root.addView(ownerAction("📅", "Calendar", "Reservas por día, hora y color", () -> showCalendarScreen()));
         Button logout = button("Cerrar sesión", DANGER, Color.WHITE);
         logout.setOnClickListener(v -> { session.logout(); showStartScreen(); });
         LinearLayout.LayoutParams logoutLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
@@ -525,6 +532,7 @@ public class MainActivity extends android.app.Activity {
             bubble.addView(text("Dejar: " + message.destination, 14, TEXT, false), wrapMT(3));
             if (message.phone != null && !message.phone.equals("null") && !message.phone.isEmpty()) bubble.addView(text("Teléfono: " + message.phone, 14, TEXT, false), wrapMT(3));
             if (message.description != null && !message.description.equals("null") && !message.description.isEmpty()) bubble.addView(text("Descripción: " + message.description, 14, TEXT, false), wrapMT(3));
+            if ("reserved".equals(message.serviceStatus)) bubble.addView(text("Reserva: " + message.reservationDate + " · " + message.reservationTime + " · Color " + message.reservationColor, 14, NAVY, true), wrapMT(4));
             bubble.addView(text(message.fixedPrice ? "Precio cerrado" + (message.estimatedPrice == null || message.estimatedPrice.isEmpty() ? "" : ": " + message.estimatedPrice + " €") : "Precio por taxímetro", 14, TEAL, true), wrapMT(5));
             String status = message.serviceStatus == null || message.serviceStatus.equals("null") ? "pending" : message.serviceStatus;
             int statusColor = "accepted".equals(status) ? TEAL : ("cancelled".equals(status) ? DANGER : SECONDARY);
@@ -573,6 +581,7 @@ public class MainActivity extends android.app.Activity {
             else {
                 if ("accepted".equals(status)) {
                     activeService = message;
+                    api.setTaxiOccupied(safeTaxiNumber(), true, (ok2, error2) -> { });
                     showAcceptedServiceDistance(message);
                     showMapScreen();
                 } else loadChatMessages();
@@ -593,8 +602,91 @@ public class MainActivity extends android.app.Activity {
     private void showServiceOptionsDialog() {
         new AlertDialog.Builder(this)
                 .setTitle("Añadir")
-                .setItems(new String[]{"Añadir servicio nuevo"}, (dialog, which) -> showNewServiceScreen())
+                .setItems(new String[]{"Añadir servicio nuevo", "Poner reserva", "Calendar"}, (dialog, which) -> {
+                    if (which == 0) showNewServiceScreen();
+                    else if (which == 1) showReservationScreen();
+                    else showCalendarScreen();
+                })
                 .show();
+    }
+
+    public void showReservationScreen() {
+        LinearLayout root = baseWithHeader("Nueva reserva", "←", true, () -> showChatScreen());
+        LinearLayout card = card();
+        Spinner serviceType = spinner(new String[]{"Taxi urbano", "Taxi aeropuerto", "Taxi adaptado", "Servicio empresa"});
+        Spinner tariff = spinner(new String[]{"Tarifa 1", "Tarifa 2", "Tarifa 3", "Tarifa 4 Aeropuerto - Moll Adossat"});
+        Spinner color = spinner(new String[]{"Verde", "Amarillo", "Azul", "Rojo", "Morado"});
+        EditText date = field("Día / mes / año", "Ej. 26/06/2026", false);
+        EditText time = field("Hora", "Ej. 18:30", false);
+        EditText pickupStreet = field("Calle recogida", "Ej. Carrer de Mallorca 401", false);
+        EditText pickupCity = field("Ciudad recogida", "Ej. Barcelona", false);
+        EditText destStreet = field("Calle destino", "Ej. Estació de Sants", false);
+        EditText destCity = field("Ciudad destino", "Ej. Barcelona", false);
+        EditText phone = field("Teléfono", "Ej. 600123456", false);
+        phone.setInputType(InputType.TYPE_CLASS_PHONE);
+        EditText desc = field("Descripción", "Detalles de la reserva", false);
+        desc.setSingleLine(false); desc.setMinLines(3);
+        card.addView(text("Servicio", 15, NAVY, true)); card.addView(serviceType, matchHMT(58, 8));
+        card.addView(text("Tarifa", 15, NAVY, true), wrapMT(12)); card.addView(tariff, matchHMT(58, 8));
+        card.addView(text("Fecha y hora", 15, NAVY, true), wrapMT(12)); card.addView(date, matchHMT(58, 8)); card.addView(time, matchHMT(58, 8));
+        card.addView(text("Color calendario", 15, NAVY, true), wrapMT(12)); card.addView(color, matchHMT(58, 8));
+        card.addView(text("Recogida", 15, NAVY, true), wrapMT(12)); card.addView(pickupStreet, matchHMT(58, 8)); card.addView(pickupCity, matchHMT(58, 8));
+        card.addView(text("Destino", 15, NAVY, true), wrapMT(12)); card.addView(destStreet, matchHMT(58, 8)); card.addView(destCity, matchHMT(58, 8));
+        card.addView(phone, matchHMT(58, 12)); card.addView(desc, matchHMT(86, 8));
+        Button send = button("Guardar reserva", TEAL, Color.WHITE);
+        send.setOnClickListener(v -> {
+            if (empty(date) || empty(time) || empty(pickupStreet) || empty(pickupCity) || empty(destStreet) || empty(destCity)) { toast("Completa fecha, hora, recogida y destino"); return; }
+            String pickup = smartAddress(pickupStreet.getText().toString(), pickupCity.getText().toString());
+            String dest = smartAddress(destStreet.getText().toString(), destCity.getText().toString());
+            double[] p = geocodeAddress(pickup); double[] d = geocodeAddress(dest);
+            api.sendReservation(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickup, dest, date.getText().toString().trim(), time.getText().toString().trim(), color.getSelectedItem().toString(), phone.getText().toString().trim(), desc.getText().toString().trim(), p[0], p[1], d[0], d[1], (ok, error) -> runOnUiThread(() -> {
+                if (error != null) toast("No se pudo guardar reserva: " + error.getMessage()); else { toast("Reserva guardada"); showChatScreen(); }
+            }));
+        });
+        card.addView(send, matchHMT(60, 18));
+        root.addView(card, cardLp());
+        setContentView(scroll(root));
+    }
+
+    public void showCalendarScreen() {
+        LinearLayout root = baseWithHeader("Calendar", "←", true, () -> showChatScreen());
+        root.addView(subtitle("Reservas por colores · " + session.getCompany().name));
+        LinearLayout list = column();
+        list.setPadding(dp(16), dp(12), dp(16), dp(24));
+        root.addView(list);
+        setContentView(scroll(root));
+        api.getMessages((messages, error) -> runOnUiThread(() -> {
+            list.removeAllViews();
+            if (error != null) { toast("No se pudo cargar calendar: " + error.getMessage()); return; }
+            boolean any = false;
+            for (ChatMessage m : messages) {
+                if (!"reserved".equals(m.serviceStatus)) continue;
+                any = true;
+                LinearLayout card = card();
+                int color = calendarColor(m.reservationColor);
+                card.setBackground(round(Color.WHITE, 18, 4, color));
+                card.addView(text(m.reservationDate + " · " + m.reservationTime, 18, color, true));
+                card.addView(text(m.pickup + " → " + m.destination, 14, TEXT, false), wrapMT(6));
+                card.addView(text("Tarifa: " + m.tariff + " · " + m.serviceType, 14, SECONDARY, false), wrapMT(4));
+                if (m.phone != null && !m.phone.equals("null")) card.addView(text("Teléfono: " + m.phone, 14, SECONDARY, false), wrapMT(4));
+                list.addView(card, cardLp());
+            }
+            if (!any) {
+                TextView empty = text("No hay reservas todavía. En Chats pulsa + > Poner reserva.", 15, SECONDARY, false);
+                empty.setGravity(Gravity.CENTER);
+                list.addView(empty);
+            }
+        }));
+    }
+
+    private int calendarColor(String name) {
+        if (name == null) return TEAL;
+        String n = name.toLowerCase(Locale.ROOT);
+        if (n.contains("rojo")) return DANGER;
+        if (n.contains("amarillo")) return YELLOW;
+        if (n.contains("azul")) return NAVY;
+        if (n.contains("morado")) return Color.rgb(126, 87, 194);
+        return TEAL;
     }
 
     public void showNewServiceScreen() {
@@ -1072,12 +1164,54 @@ public class MainActivity extends android.app.Activity {
             mapView.getOverlays().add(serviceLine);
         }
         if (selectedTaxi != null && selectedTaxi.latitude != 0 && selectedTaxi.longitude != 0) {
-            List<GeoPoint> points = new ArrayList<>();
-            points.add(new GeoPoint(selectedTaxi.latitude, selectedTaxi.longitude));
-            points.add(pickup);
-            serviceLine.setPoints(points);
+            fetchRouteToService(selectedTaxi.latitude, selectedTaxi.longitude, activeService.pickupLat, activeService.pickupLng);
         }
         mapView.invalidate();
+    }
+
+    private void fetchRouteToService(double fromLat, double fromLng, double toLat, double toLng) {
+        new Thread(() -> {
+            try {
+                String urlText = "https://router.project-osrm.org/route/v1/driving/" + fromLng + "," + fromLat + ";" + toLng + "," + toLat + "?overview=full&geometries=geojson&steps=true&language=es";
+                HttpURLConnection con = (HttpURLConnection) new URL(urlText).openConnection();
+                con.setConnectTimeout(8000);
+                con.setReadTimeout(8000);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(con.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+                JSONObject root = new JSONObject(sb.toString());
+                JSONArray coords = root.getJSONArray("routes").getJSONObject(0).getJSONObject("geometry").getJSONArray("coordinates");
+                JSONArray steps = root.getJSONArray("routes").getJSONObject(0).getJSONArray("legs").getJSONObject(0).getJSONArray("steps");
+                List<GeoPoint> points = new ArrayList<>();
+                for (int i = 0; i < coords.length(); i++) {
+                    JSONArray c = coords.getJSONArray(i);
+                    points.add(new GeoPoint(c.getDouble(1), c.getDouble(0)));
+                }
+                String instruction = "Sigue la ruta hacia la recogida";
+                if (steps.length() > 0) {
+                    JSONObject maneuver = steps.getJSONObject(0).getJSONObject("maneuver");
+                    instruction = maneuver.optString("modifier", "Continúa") + " · " + steps.getJSONObject(0).optString("name", "ruta");
+                }
+                String finalInstruction = instruction;
+                runOnUiThread(() -> {
+                    if (serviceLine != null) serviceLine.setPoints(points);
+                    if (taxiInfoText != null) taxiInfoText.setText("OCUPADO · GPS servicio · " + finalInstruction);
+                    if (mapView != null) mapView.invalidate();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (serviceLine != null) {
+                        List<GeoPoint> points = new ArrayList<>();
+                        points.add(new GeoPoint(fromLat, fromLng));
+                        points.add(new GeoPoint(toLat, toLng));
+                        serviceLine.setPoints(points);
+                    }
+                    if (taxiInfoText != null) taxiInfoText.setText("OCUPADO · GPS servicio hacia recogida");
+                });
+            }
+        }).start();
     }
 
     private void updateTaxiMarker(Taxi taxi) {
@@ -1090,8 +1224,8 @@ public class MainActivity extends android.app.Activity {
             mapView.getOverlays().add(marker);
         }
         marker.setPosition(new GeoPoint(taxi.latitude, taxi.longitude));
-        marker.setTitle("🚕 Taxi " + taxi.number + " · " + taxi.driverName);
-        marker.setSnippet((taxi.online ? "En línea" : "Fuera de línea") + " · " + taxi.speed + " km/h · " + taxi.direction);
+        marker.setTitle("🚕 Taxi " + taxi.number + " · " + taxi.driverName + (taxi.occupied ? " · OCUPADO" : ""));
+        marker.setSnippet((taxi.online ? "En línea" : "Fuera de línea") + " · " + (taxi.occupied ? "Ocupado · " : "Libre · ") + taxi.speed + " km/h · " + taxi.direction);
         mapView.invalidate();
     }
 
