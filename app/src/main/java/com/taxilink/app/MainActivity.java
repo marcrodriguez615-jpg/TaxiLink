@@ -615,11 +615,15 @@ public class MainActivity extends android.app.Activity {
         Spinner tariff = spinner(new String[]{"Tarifa 1", "Tarifa 2", "Tarifa 3", "Tarifa aeropuerto"});
         card.addView(tariff, matchHMT(58, 8));
         card.addView(text("Recoger al cliente en", 15, NAVY, true), wrapMT(18));
-        EditText pickup = field("Recoger al cliente en", "Carrer de Mallorca, Barcelona", false);
-        card.addView(pickup, matchHMT(58, 8));
+        EditText pickupStreet = field("Calle de recogida", "Ej. Carrer de Mallorca 401", false);
+        EditText pickupCity = field("Ciudad de recogida", "Ej. Barcelona", false);
+        card.addView(pickupStreet, matchHMT(58, 8));
+        card.addView(pickupCity, matchHMT(58, 8));
         card.addView(text("Dejar al cliente en", 15, NAVY, true), wrapMT(18));
-        EditText destination = field("Dejar al cliente en", "Estació de Sants", false);
-        card.addView(destination, matchHMT(58, 8));
+        EditText destinationStreet = field("Calle de destino", "Ej. Estació de Sants", false);
+        EditText destinationCity = field("Ciudad de destino", "Ej. Barcelona", false);
+        card.addView(destinationStreet, matchHMT(58, 8));
+        card.addView(destinationCity, matchHMT(58, 8));
         CheckBox fixed = new CheckBox(this);
         fixed.setText("Precio cerrado");
         fixed.setTextColor(NAVY);
@@ -647,11 +651,14 @@ public class MainActivity extends android.app.Activity {
         Button send = button("Enviar servicio", TEAL, Color.WHITE);
         send.setTextSize(20);
         send.setOnClickListener(v -> {
-            if (empty(pickup) || empty(destination)) { toast("Indica recogida y destino"); return; }
+            if (empty(pickupStreet) || empty(pickupCity) || empty(destinationStreet) || empty(destinationCity)) { toast("Indica calle y ciudad de recogida y destino"); return; }
             send.setEnabled(false);
-            double[] pickupPoint = geocodeAddress(pickup.getText().toString().trim());
-            double[] destinationPoint = geocodeAddress(destination.getText().toString().trim());
-            api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickup.getText().toString().trim(), destination.getText().toString().trim(), fixed.isChecked(), price.getText().toString().trim(), phone.getText().toString().trim(), description.getText().toString().trim(), pickupPoint[0], pickupPoint[1], destinationPoint[0], destinationPoint[1], (ok, error) -> runOnUiThread(() -> {
+            String pickupAddress = smartAddress(pickupStreet.getText().toString().trim(), pickupCity.getText().toString().trim());
+            String destinationAddress = smartAddress(destinationStreet.getText().toString().trim(), destinationCity.getText().toString().trim());
+            double[] pickupPoint = geocodeAddress(pickupAddress);
+            double[] destinationPoint = geocodeAddress(destinationAddress);
+            if (pickupPoint[0] == 0 || destinationPoint[0] == 0) toast("Aviso: una dirección no se detectó bien. Se enviará igualmente.");
+            api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickupAddress, destinationAddress, fixed.isChecked(), price.getText().toString().trim(), phone.getText().toString().trim(), description.getText().toString().trim(), pickupPoint[0], pickupPoint[1], destinationPoint[0], destinationPoint[1], (ok, error) -> runOnUiThread(() -> {
                 send.setEnabled(true);
                 if (error != null) toast("No se pudo enviar servicio: " + error.getMessage());
                 else { toast("Servicio enviado al chat"); showChatScreen(); }
@@ -1036,10 +1043,31 @@ public class MainActivity extends android.app.Activity {
     private double[] geocodeAddress(String address) {
         try {
             Geocoder geocoder = new Geocoder(this, Locale.getDefault());
-            List<Address> results = geocoder.getFromLocationName(address + ", España", 1);
+            List<Address> results = geocoder.getFromLocationName(address, 1);
+            if ((results == null || results.isEmpty()) && !address.toLowerCase(Locale.ROOT).contains("españa")) {
+                results = geocoder.getFromLocationName(address + ", España", 1);
+            }
             if (results != null && !results.isEmpty()) return new double[]{results.get(0).getLatitude(), results.get(0).getLongitude()};
         } catch (Exception ignored) { }
         return new double[]{0, 0};
+    }
+
+    private String smartAddress(String street, String city) {
+        String cleanStreet = normalizeAddressPart(street);
+        String cleanCity = normalizeAddressPart(city);
+        return cleanStreet + ", " + cleanCity + ", España";
+    }
+
+    private String normalizeAddressPart(String value) {
+        String v = value.trim().replaceAll("\\s+", " ");
+        String lower = v.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("c/ ")) v = "Calle " + v.substring(3);
+        else if (lower.startsWith("c. ")) v = "Calle " + v.substring(3);
+        else if (lower.startsWith("av. ")) v = "Avenida " + v.substring(4);
+        else if (lower.startsWith("av ")) v = "Avenida " + v.substring(3);
+        else if (lower.startsWith("pza. ")) v = "Plaza " + v.substring(5);
+        else if (lower.startsWith("pl. ")) v = "Plaza " + v.substring(4);
+        return v;
     }
 
     private View taxiIllustration() {
