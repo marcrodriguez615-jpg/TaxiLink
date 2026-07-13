@@ -11,6 +11,10 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.location.Address;
 import android.location.Geocoder;
+import android.media.MediaPlayer;
+import android.media.MediaRecorder;
+import android.media.ToneGenerator;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -33,6 +37,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ArrayAdapter;
+import android.util.Base64;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -42,6 +47,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
@@ -71,6 +79,10 @@ public class MainActivity extends android.app.Activity {
     private Marker serviceMarker;
     private Polyline serviceLine;
     private ChatMessage activeService;
+    private MediaRecorder mediaRecorder;
+    private File walkieAudioFile;
+    private String lastWalkieClipId = "";
+    private long lastUrgentAt = 0;
     private Taxi selectedTaxi;
     private TaxiLinkApi api;
     private Handler handler;
@@ -334,7 +346,9 @@ public class MainActivity extends android.app.Activity {
         info.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         panel.addView(info);
         LinearLayout controls = row(); controls.setGravity(Gravity.CENTER); controls.setPadding(0, dp(14), 0, 0);
-        controls.addView(roundSmallButton("🔊", NAVY, Color.WHITE));
+        Button urgent = roundSmallButton("☎", NAVY, Color.WHITE);
+        urgent.setOnClickListener(v -> sendUrgentAlert());
+        controls.addView(urgent);
         micButton = button("🎙", TEAL, Color.WHITE);
         micButton.setTextSize(24);
         micButton.setOnTouchListener((v, e) -> {
@@ -362,12 +376,14 @@ public class MainActivity extends android.app.Activity {
             walkieLabel.setText("Hablando: " + selectedTaxi.name());
             micButton.setBackground(round(YELLOW, 35, 0, YELLOW));
             micButton.setTextColor(NAVY_DARK);
+            startWalkieRecording();
             api.startWalkie(selectedTaxi.number, session.getDriverName(), (ok, error) -> runOnUiThread(() -> { if (error != null) toast("Walkie sin conexión: " + error.getMessage()); }));
         } else {
             localSpeaking = false;
             walkieLabel.setText("Walkie listo");
             micButton.setBackground(round(TEAL, 35, 0, TEAL));
             micButton.setTextColor(Color.WHITE);
+            stopWalkieRecordingAndSend();
             api.stopWalkie(selectedTaxi.number, (ok, error) -> { });
         }
     }
@@ -843,10 +859,105 @@ public class MainActivity extends android.app.Activity {
                         walkieLabel.setText(status);
                     }
                 }));
+                api.getLatestWalkieClip((clip, error) -> runOnUiThread(() -> {
+                    if (error == null && clip != null && clip.id != null && !clip.id.equals(lastWalkieClipId) && !api.deviceId().equals(clip.deviceId)) {
+                        lastWalkieClipId = clip.id;
+                        playWalkieClip(clip);
+                    }
+                }));
+                api.getUrgentAlert((alert, error) -> runOnUiThread(() -> {
+                    if (error == null && alert != null && alert.createdAt > lastUrgentAt && !api.deviceId().equals(alert.deviceId)) {
+                        lastUrgentAt = alert.createdAt;
+                        playUrgentTone();
+                        toast("Aviso urgente de Taxi " + alert.taxiNumber + " · " + alert.sender);
+                    }
+                }));
                 handler.postDelayed(this, 3000);
             }
         };
         handler.postDelayed(walkiePoller, 2500);
+    }
+
+    private void startWalkieRecording() {
+        try {
+            walkieAudioFile = new File(getCacheDir(), "walkie_" + System.currentTimeMillis() + ".3gp");
+            mediaRecorder = new MediaRecorder();
+            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
+            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
+            mediaRecorder.setOutputFile(walkieAudioFile.getAbsolutePath());
+            mediaRecorder.prepare();
+            mediaRecorder.start();
+        } catch (Exception e) {
+            toast("No se pudo grabar walkie: " + e.getMessage());
+            releaseRecorder();
+        }
+    }
+
+    private void stopWalkieRecordingAndSend() {
+        try {
+            if (mediaRecorder != null) {
+                mediaRecorder.stop();
+                releaseRecorder();
+                if (walkieAudioFile != null && walkieAudioFile.length() > 0) {
+                    String audio = fileToBase64(walkieAudioFile);
+                    api.sendWalkieClip(selectedTaxi.number, session.getDriverName(), audio, (ok, error) -> runOnUiThread(() -> {
+                        if (error != null) toast("No se pudo enviar audio: " + error.getMessage());
+                    }));
+                }
+            }
+        } catch (Exception e) {
+            releaseRecorder();
+            toast("Audio walkie demasiado corto o inválido");
+        }
+    }
+
+    private void releaseRecorder() {
+        try { if (mediaRecorder != null) mediaRecorder.release(); } catch (Exception ignored) { }
+        mediaRecorder = null;
+    }
+
+    private String fileToBase64(File file) throws Exception {
+        byte[] bytes = new byte[(int) file.length()];
+        FileInputStream in = new FileInputStream(file);
+        int read = in.read(bytes);
+        in.close();
+        if (read <= 0) return "";
+        return Base64.encodeToString(bytes, Base64.NO_WRAP);
+    }
+
+    private void playWalkieClip(WalkieClip clip) {
+        try {
+            byte[] bytes = Base64.decode(clip.audioBase64, Base64.DEFAULT);
+            File file = new File(getCacheDir(), "incoming_walkie.3gp");
+            FileOutputStream out = new FileOutputStream(file);
+            out.write(bytes);
+            out.close();
+            MediaPlayer player = new MediaPlayer();
+            player.setDataSource(file.getAbsolutePath());
+            player.setOnCompletionListener(MediaPlayer::release);
+            player.prepare();
+            player.start();
+            if (walkieLabel != null) walkieLabel.setText("Escuchando: Taxi " + clip.taxiNumber + " · " + clip.sender);
+        } catch (Exception e) {
+            toast("No se pudo reproducir walkie");
+        }
+    }
+
+    private void sendUrgentAlert() {
+        playUrgentTone();
+        api.sendUrgentAlert(selectedTaxi.number, session.getDriverName(), (ok, error) -> runOnUiThread(() -> {
+            if (error != null) toast("No se pudo enviar aviso: " + error.getMessage());
+            else toast("Aviso urgente enviado");
+        }));
+    }
+
+    private void playUrgentTone() {
+        try {
+            ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
+            tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 900);
+            handler.postDelayed(tone::release, 1200);
+        } catch (Exception ignored) { }
     }
 
     private void updateUserMarker(double latitude, double longitude) {

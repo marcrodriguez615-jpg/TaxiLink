@@ -202,6 +202,78 @@ public class TaxiLinkApi {
         });
     }
 
+    public void sendWalkieClip(int taxiNumber, String driverName, String audioBase64, Callback<Boolean> callback) {
+        ensureAuth(error -> {
+            if (error != null) { callback.onResult(null, error); return; }
+            Map<String, Object> data = new HashMap<>();
+            data.put("deviceId", deviceId());
+            data.put("sender", driverName);
+            data.put("taxiNumber", taxiNumber);
+            data.put("audioBase64", audioBase64);
+            data.put("createdAt", System.currentTimeMillis());
+            db.collection("companies").document(session.getCentralNumber()).collection("walkieClips").add(data)
+                    .addOnSuccessListener(v -> callback.onResult(true, null))
+                    .addOnFailureListener(e -> callback.onResult(null, e));
+        });
+    }
+
+    public void getLatestWalkieClip(Callback<WalkieClip> callback) {
+        ensureAuth(error -> {
+            if (error != null) { callback.onResult(null, error); return; }
+            db.collection("companies").document(session.getCentralNumber()).collection("walkieClips")
+                    .orderBy("createdAt", Query.Direction.DESCENDING).limit(1).get()
+                    .addOnSuccessListener(q -> {
+                        if (q.isEmpty()) { callback.onResult(null, null); return; }
+                        DocumentSnapshot doc = q.getDocuments().get(0);
+                        WalkieClip clip = new WalkieClip();
+                        clip.id = doc.getId();
+                        clip.deviceId = doc.getString("deviceId");
+                        clip.sender = doc.getString("sender");
+                        Long taxi = doc.getLong("taxiNumber");
+                        Long created = doc.getLong("createdAt");
+                        clip.taxiNumber = taxi == null ? 0 : taxi.intValue();
+                        clip.createdAt = created == null ? 0 : created;
+                        clip.audioBase64 = doc.getString("audioBase64");
+                        callback.onResult(clip, null);
+                    })
+                    .addOnFailureListener(e -> callback.onResult(null, e));
+        });
+    }
+
+    public void sendUrgentAlert(int taxiNumber, String driverName, Callback<Boolean> callback) {
+        ensureAuth(error -> {
+            if (error != null) { callback.onResult(null, error); return; }
+            Map<String, Object> data = new HashMap<>();
+            data.put("deviceId", deviceId());
+            data.put("sender", driverName);
+            data.put("taxiNumber", taxiNumber);
+            data.put("updatedAt", System.currentTimeMillis());
+            db.collection("companies").document(session.getCentralNumber()).collection("state").document("urgent").set(data)
+                    .addOnSuccessListener(v -> callback.onResult(true, null))
+                    .addOnFailureListener(e -> callback.onResult(null, e));
+        });
+    }
+
+    public void getUrgentAlert(Callback<WalkieClip> callback) {
+        ensureAuth(error -> {
+            if (error != null) { callback.onResult(null, error); return; }
+            db.collection("companies").document(session.getCentralNumber()).collection("state").document("urgent").get()
+                    .addOnSuccessListener(doc -> {
+                        if (!doc.exists()) { callback.onResult(null, null); return; }
+                        WalkieClip alert = new WalkieClip();
+                        alert.id = "urgent";
+                        alert.deviceId = doc.getString("deviceId");
+                        alert.sender = doc.getString("sender");
+                        Long taxi = doc.getLong("taxiNumber");
+                        Long updated = doc.getLong("updatedAt");
+                        alert.taxiNumber = taxi == null ? 0 : taxi.intValue();
+                        alert.createdAt = updated == null ? 0 : updated;
+                        callback.onResult(alert, null);
+                    })
+                    .addOnFailureListener(e -> callback.onResult(null, e));
+        });
+    }
+
     public void getWalkieStatus(Callback<String> callback) {
         ensureAuth(error -> {
             if (error != null) { callback.onResult(null, error); return; }

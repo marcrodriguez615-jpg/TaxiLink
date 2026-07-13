@@ -66,6 +66,16 @@ service cloud.firestore {
         allow delete: if isOwner(central);
       }
 
+      match /walkieClips/{clipId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.deviceId is string
+          && request.resource.data.sender is string
+          && request.resource.data.taxiNumber is int
+          && request.resource.data.audioBase64 is string;
+        allow update, delete: if isOwner(central);
+      }
+
       match /state/{stateId} {
         allow read: if signedIn();
         allow create, update: if signedIn();
