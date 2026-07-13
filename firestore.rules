@@ -6,81 +6,27 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isCentral17(central) {
-      return central is string && central.matches('^[0-9]{17}$');
-    }
-
-    function isOwner(central) {
-      return signedIn()
-        && exists(/databases/$(database)/documents/companies/$(central))
-        && get(/databases/$(database)/documents/companies/$(central)).data.ownerUid == request.auth.uid;
-    }
-
     match /companies/{central} {
-      allow create: if signedIn()
-        && isCentral17(central)
-        && request.resource.data.centralNumber == central
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.name is string
-        && request.resource.data.identifier is string
-        && request.resource.data.password is string
-        && request.resource.data.ownerPassword is string
-        && request.resource.data.ownerName is string;
-
-      allow read: if signedIn();
-      allow update: if isOwner(central);
-      allow delete: if isOwner(central);
+      allow read, create, update, delete: if signedIn();
 
       match /accessRequests/{requestId} {
-        allow read: if signedIn();
-        allow create: if signedIn()
-          && request.resource.data.centralNumber == central
-          && request.resource.data.status == 'pending'
-          && request.resource.data.driverName is string
-          && request.resource.data.taxiNumber is number;
-        allow update: if isOwner(central)
-          && request.resource.data.status in ['approved', 'rejected'];
-        allow delete: if isOwner(central);
+        allow read, create, update, delete: if signedIn();
       }
 
       match /taxis/{taxiId} {
-        allow read: if signedIn();
-        allow create, update: if signedIn()
-          && request.resource.data.number is number
-          && request.resource.data.driverName is string
-          && request.resource.data.latitude is number
-          && request.resource.data.longitude is number
-          && request.resource.data.speed is int;
-        allow delete: if isOwner(central);
+        allow read, create, update, delete: if signedIn();
       }
 
       match /messages/{messageId} {
-        allow read: if signedIn();
-        allow create: if signedIn()
-          && request.resource.data.sender is string
-          && request.resource.data.role is string
-          && request.resource.data.type in ['text', 'service']
-          && request.resource.data.text is string;
-        allow update: if signedIn()
-          && resource.data.type == 'service'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['service']);
-        allow delete: if isOwner(central);
+        allow read, create, update, delete: if signedIn();
       }
 
       match /walkieClips/{clipId} {
-        allow read: if signedIn();
-        allow create: if signedIn()
-          && request.resource.data.deviceId is string
-          && request.resource.data.sender is string
-          && request.resource.data.taxiNumber is number
-          && request.resource.data.audioBase64 is string;
-        allow update, delete: if isOwner(central);
+        allow read, create, update, delete: if signedIn();
       }
 
       match /state/{stateId} {
-        allow read: if signedIn();
-        allow create, update: if signedIn();
-        allow delete: if isOwner(central);
+        allow read, create, update, delete: if signedIn();
       }
     }
   }
