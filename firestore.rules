@@ -37,7 +37,7 @@ service cloud.firestore {
           && request.resource.data.centralNumber == central
           && request.resource.data.status == 'pending'
           && request.resource.data.driverName is string
-          && request.resource.data.taxiNumber is int;
+          && request.resource.data.taxiNumber is number;
         allow update: if isOwner(central)
           && request.resource.data.status in ['approved', 'rejected'];
         allow delete: if isOwner(central);
@@ -46,7 +46,7 @@ service cloud.firestore {
       match /taxis/{taxiId} {
         allow read: if signedIn();
         allow create, update: if signedIn()
-          && request.resource.data.number is int
+          && request.resource.data.number is number
           && request.resource.data.driverName is string
           && request.resource.data.latitude is number
           && request.resource.data.longitude is number
@@ -72,7 +72,7 @@ service cloud.firestore {
         allow create: if signedIn()
           && request.resource.data.deviceId is string
           && request.resource.data.sender is string
-          && request.resource.data.taxiNumber is int
+          && request.resource.data.taxiNumber is number
           && request.resource.data.audioBase64 is string;
         allow update, delete: if isOwner(central);
       }

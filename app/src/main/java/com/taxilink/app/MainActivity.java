@@ -239,7 +239,7 @@ public class MainActivity extends android.app.Activity {
             api.requestAccess(company.getText().toString().trim(), pass.getText().toString().trim(), taxi.getText().toString().trim(), driverName.getText().toString().trim(), (requestId, error) -> runOnUiThread(() -> {
                 enter.setEnabled(true);
                 enter.setText("Entrar");
-                if (error != null) { toast("No se pudo solicitar acceso: " + error.getMessage()); return; }
+                if (error != null) { showError("No se pudo solicitar acceso", error); return; }
                 session.saveDriverLogin(company.getText().toString().trim(), taxi.getText().toString().trim(), remember.isChecked());
                 session.saveDriverIdentity(driverName.getText().toString().trim(), requestId);
                 showWaitingApprovalScreen(requestId);
@@ -1323,6 +1323,7 @@ public class MainActivity extends android.app.Activity {
     private android.graphics.drawable.GradientDrawable round(int color, int radius, int stroke, int strokeColor) { android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable(); g.setColor(color); g.setCornerRadius(dp(radius)); if (stroke > 0) g.setStroke(dp(stroke), strokeColor); return g; }
     private boolean empty(EditText e) { return e.getText().toString().trim().isEmpty(); }
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+    private void showError(String title, Exception error) { new AlertDialog.Builder(this).setTitle(title).setMessage(error == null ? "Error desconocido" : error.getMessage()).setPositiveButton("Cerrar", null).show(); }
     private String now() { return new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()); }
     private int safeTaxiNumber() { try { return Integer.parseInt(session.getTaxiNumber()); } catch (Exception e) { return 3; } }
     private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density + .5f); }
