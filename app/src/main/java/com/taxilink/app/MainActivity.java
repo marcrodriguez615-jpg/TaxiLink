@@ -9,6 +9,8 @@ import android.graphics.Typeface;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.location.Address;
+import android.location.Geocoder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -46,6 +48,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
+import org.osmdroid.views.overlay.Polyline;
 
 public class MainActivity extends android.app.Activity {
     private final int NAVY = Color.rgb(6, 26, 46);
@@ -65,6 +68,9 @@ public class MainActivity extends android.app.Activity {
     private MapView mapView;
     private final Map<Integer, Marker> taxiMarkers = new HashMap<>();
     private Marker userMarker;
+    private Marker serviceMarker;
+    private Polyline serviceLine;
+    private ChatMessage activeService;
     private Taxi selectedTaxi;
     private TaxiLinkApi api;
     private Handler handler;
@@ -308,6 +314,7 @@ public class MainActivity extends android.app.Activity {
         mapView.getController().setZoom(15.0);
         mapView.getController().setCenter(new GeoPoint(41.6080, 2.2877));
         main.addView(mapView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        showActiveServiceOnMap();
         startRealGpsUpdates();
         startTaxiPolling();
         startWalkiePolling();
@@ -498,7 +505,24 @@ public class MainActivity extends android.app.Activity {
             bubble.addView(text("Tarifa: " + message.tariff, 14, TEXT, false), wrapMT(3));
             bubble.addView(text("Recoger: " + message.pickup, 14, TEXT, false), wrapMT(3));
             bubble.addView(text("Dejar: " + message.destination, 14, TEXT, false), wrapMT(3));
+            if (message.phone != null && !message.phone.equals("null") && !message.phone.isEmpty()) bubble.addView(text("Teléfono: " + message.phone, 14, TEXT, false), wrapMT(3));
+            if (message.description != null && !message.description.equals("null") && !message.description.isEmpty()) bubble.addView(text("Descripción: " + message.description, 14, TEXT, false), wrapMT(3));
             bubble.addView(text(message.fixedPrice ? "Precio cerrado" + (message.estimatedPrice == null || message.estimatedPrice.isEmpty() ? "" : ": " + message.estimatedPrice + " €") : "Precio por taxímetro", 14, TEAL, true), wrapMT(5));
+            String status = message.serviceStatus == null || message.serviceStatus.equals("null") ? "pending" : message.serviceStatus;
+            int statusColor = "accepted".equals(status) ? TEAL : ("cancelled".equals(status) ? DANGER : SECONDARY);
+            bubble.addView(text("Estado: " + serviceStatusText(status), 14, statusColor, true), wrapMT(6));
+            if ("pending".equals(status)) {
+                LinearLayout actions = row();
+                actions.setGravity(Gravity.CENTER_VERTICAL);
+                Button accept = button("Aceptar", TEAL, Color.WHITE);
+                accept.setOnClickListener(v -> updateServiceStatus(message, "accepted"));
+                Button cancel = button("Cancelar", DANGER, Color.WHITE);
+                cancel.setOnClickListener(v -> updateServiceStatus(message, "cancelled"));
+                LinearLayout.LayoutParams a = new LinearLayout.LayoutParams(0, dp(48), 1); a.setMargins(0, dp(10), dp(6), 0);
+                LinearLayout.LayoutParams c = new LinearLayout.LayoutParams(0, dp(48), 1); c.setMargins(dp(6), dp(10), 0, 0);
+                actions.addView(accept, a); actions.addView(cancel, c);
+                bubble.addView(actions);
+            }
         } else {
             bubble.addView(text(message.text, 16, TEXT, false), wrapMT(5));
         }
@@ -517,6 +541,35 @@ public class MainActivity extends android.app.Activity {
             }
         };
         handler.postDelayed(chatPoller, 5000);
+    }
+
+    private String serviceStatusText(String status) {
+        if ("accepted".equals(status)) return "Aceptado";
+        if ("cancelled".equals(status)) return "Cancelado";
+        return "Pendiente";
+    }
+
+    private void updateServiceStatus(ChatMessage message, String status) {
+        api.updateServiceStatus(message.id, status, (ok, error) -> runOnUiThread(() -> {
+            if (error != null) toast("No se pudo actualizar servicio: " + error.getMessage());
+            else {
+                if ("accepted".equals(status)) {
+                    activeService = message;
+                    showAcceptedServiceDistance(message);
+                    showMapScreen();
+                } else loadChatMessages();
+            }
+        }));
+    }
+
+    private void showAcceptedServiceDistance(ChatMessage message) {
+        if (selectedTaxi != null && message.pickupLat != 0 && message.pickupLng != 0 && selectedTaxi.latitude != 0 && selectedTaxi.longitude != 0) {
+            float[] result = new float[1];
+            Location.distanceBetween(selectedTaxi.latitude, selectedTaxi.longitude, message.pickupLat, message.pickupLng, result);
+            toast("Servicio aceptado. Estás a " + String.format(Locale.getDefault(), "%.1f", result[0] / 1000f) + " km de la recogida");
+        } else {
+            toast("Servicio aceptado. GPS hacia recogida activado.");
+        }
     }
 
     private void showServiceOptionsDialog() {
@@ -561,12 +614,28 @@ public class MainActivity extends android.app.Activity {
         price.setVisibility(View.GONE);
         fixed.setOnCheckedChangeListener((buttonView, isChecked) -> price.setVisibility(isChecked ? View.VISIBLE : View.GONE));
         card.addView(price, matchHMT(58, 8));
+        Button datos = button("Datos", Color.WHITE, TEAL);
+        datos.setBackground(round(Color.WHITE, 16, 1, TEAL));
+        card.addView(datos, matchHMT(52, 12));
+        LinearLayout extraData = column();
+        extraData.setVisibility(View.GONE);
+        EditText phone = field("Teléfono del cliente", "Ej. 600123456", false);
+        phone.setInputType(InputType.TYPE_CLASS_PHONE);
+        EditText description = field("Descripción del servicio", "Ej. Cliente con maletas, espera en puerta", false);
+        description.setSingleLine(false);
+        description.setMinLines(3);
+        extraData.addView(phone, matchHMT(58, 8));
+        extraData.addView(description, matchHMT(86, 8));
+        datos.setOnClickListener(v -> extraData.setVisibility(extraData.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+        card.addView(extraData);
         Button send = button("Enviar servicio", TEAL, Color.WHITE);
         send.setTextSize(20);
         send.setOnClickListener(v -> {
             if (empty(pickup) || empty(destination)) { toast("Indica recogida y destino"); return; }
             send.setEnabled(false);
-            api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickup.getText().toString().trim(), destination.getText().toString().trim(), fixed.isChecked(), price.getText().toString().trim(), (ok, error) -> runOnUiThread(() -> {
+            double[] pickupPoint = geocodeAddress(pickup.getText().toString().trim());
+            double[] destinationPoint = geocodeAddress(destination.getText().toString().trim());
+            api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickup.getText().toString().trim(), destination.getText().toString().trim(), fixed.isChecked(), price.getText().toString().trim(), phone.getText().toString().trim(), description.getText().toString().trim(), pickupPoint[0], pickupPoint[1], destinationPoint[0], destinationPoint[1], (ok, error) -> runOnUiThread(() -> {
                 send.setEnabled(true);
                 if (error != null) toast("No se pudo enviar servicio: " + error.getMessage());
                 else { toast("Servicio enviado al chat"); showChatScreen(); }
@@ -748,6 +817,10 @@ public class MainActivity extends android.app.Activity {
         if (taxiPoller != null) handler.removeCallbacks(taxiPoller);
         taxiPoller = new Runnable() {
             @Override public void run() {
+                if (!"Propietario".equals(session.getRole())) {
+                    handler.postDelayed(this, 7000);
+                    return;
+                }
                 api.getTaxis(session.getCentralNumber(), (taxis, error) -> runOnUiThread(() -> {
                     if (error == null && mapView != null) {
                         for (Taxi taxi : taxis) {
@@ -787,6 +860,33 @@ public class MainActivity extends android.app.Activity {
         }
         userMarker.setPosition(point);
         mapView.getController().animateTo(point);
+        if (activeService != null) showActiveServiceOnMap();
+        mapView.invalidate();
+    }
+
+    private void showActiveServiceOnMap() {
+        if (mapView == null || activeService == null || activeService.pickupLat == 0 || activeService.pickupLng == 0) return;
+        GeoPoint pickup = new GeoPoint(activeService.pickupLat, activeService.pickupLng);
+        if (serviceMarker == null) {
+            serviceMarker = new Marker(mapView);
+            serviceMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+            mapView.getOverlays().add(serviceMarker);
+        }
+        serviceMarker.setPosition(pickup);
+        serviceMarker.setTitle("📍 Recogida del servicio");
+        serviceMarker.setSnippet(activeService.pickup + " → " + activeService.destination);
+        if (serviceLine == null) {
+            serviceLine = new Polyline();
+            serviceLine.setColor(TEAL);
+            serviceLine.setWidth(dp(4));
+            mapView.getOverlays().add(serviceLine);
+        }
+        if (selectedTaxi != null && selectedTaxi.latitude != 0 && selectedTaxi.longitude != 0) {
+            List<GeoPoint> points = new ArrayList<>();
+            points.add(new GeoPoint(selectedTaxi.latitude, selectedTaxi.longitude));
+            points.add(pickup);
+            serviceLine.setPoints(points);
+        }
         mapView.invalidate();
     }
 
@@ -820,6 +920,15 @@ public class MainActivity extends android.app.Activity {
         sb.append(random.nextInt(9) + 1);
         for (int i = 1; i < 17; i++) sb.append(random.nextInt(10));
         return sb.toString();
+    }
+
+    private double[] geocodeAddress(String address) {
+        try {
+            Geocoder geocoder = new Geocoder(this, Locale.getDefault());
+            List<Address> results = geocoder.getFromLocationName(address + ", España", 1);
+            if (results != null && !results.isEmpty()) return new double[]{results.get(0).getLatitude(), results.get(0).getLongitude()};
+        } catch (Exception ignored) { }
+        return new double[]{0, 0};
     }
 
     private View taxiIllustration() {

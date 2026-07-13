@@ -238,15 +238,25 @@ public class TaxiLinkApi {
         });
     }
 
-    public void sendService(String serviceType, String tariff, String pickup, String destination, boolean fixedPrice, String estimatedPrice, Callback<Boolean> callback) {
+    public void sendService(String serviceType, String tariff, String pickup, String destination, boolean fixedPrice, String estimatedPrice, String phone, String description, double pickupLat, double pickupLng, double destinationLat, double destinationLng, Callback<Boolean> callback) {
         ensureAuth(error -> {
             if (error != null) { callback.onResult(null, error); return; }
         Map<String, Object> service = new HashMap<>();
-        service.put("serviceType", serviceType); service.put("tariff", tariff); service.put("pickup", pickup); service.put("destination", destination); service.put("fixedPrice", fixedPrice); service.put("estimatedPrice", estimatedPrice);
+        service.put("serviceType", serviceType); service.put("tariff", tariff); service.put("pickup", pickup); service.put("destination", destination); service.put("fixedPrice", fixedPrice); service.put("estimatedPrice", estimatedPrice); service.put("phone", phone); service.put("description", description); service.put("pickupLat", pickupLat); service.put("pickupLng", pickupLng); service.put("destinationLat", destinationLat); service.put("destinationLng", destinationLng); service.put("status", "pending");
         Map<String, Object> data = baseMessage("service", "Nuevo servicio: " + pickup + " → " + destination);
         data.put("service", service);
         db.collection("companies").document(session.getCentralNumber()).collection("messages").add(data)
                 .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
+        });
+    }
+
+    public void updateServiceStatus(String messageId, String status, Callback<Boolean> callback) {
+        ensureAuth(error -> {
+            if (error != null) { callback.onResult(null, error); return; }
+            db.collection("companies").document(session.getCentralNumber()).collection("messages").document(messageId)
+                    .update("service.status", status, "service.reviewedBy", baseMessage("text", "").get("sender"), "service.acceptedBy", baseMessage("text", "").get("sender"), "service.acceptedTaxi", safeTaxiNumber(), "service.reviewedAt", System.currentTimeMillis())
+                    .addOnSuccessListener(v -> callback.onResult(true, null))
+                    .addOnFailureListener(e -> callback.onResult(null, e));
         });
     }
 
@@ -284,7 +294,10 @@ public class TaxiLinkApi {
         ChatMessage m = new ChatMessage();
         m.id = doc.getId(); m.sender = doc.getString("sender"); m.role = doc.getString("role"); m.type = doc.getString("type"); m.text = doc.getString("text"); m.createdAt = String.valueOf(doc.getLong("createdAt"));
         Map<String, Object> s = (Map<String, Object>) doc.get("service");
-        if (s != null) { m.serviceType = String.valueOf(s.get("serviceType")); m.tariff = String.valueOf(s.get("tariff")); m.pickup = String.valueOf(s.get("pickup")); m.destination = String.valueOf(s.get("destination")); m.fixedPrice = Boolean.TRUE.equals(s.get("fixedPrice")); m.estimatedPrice = String.valueOf(s.get("estimatedPrice")); }
+        if (s != null) { m.serviceType = String.valueOf(s.get("serviceType")); m.tariff = String.valueOf(s.get("tariff")); m.pickup = String.valueOf(s.get("pickup")); m.destination = String.valueOf(s.get("destination")); m.fixedPrice = Boolean.TRUE.equals(s.get("fixedPrice")); m.estimatedPrice = String.valueOf(s.get("estimatedPrice")); m.phone = String.valueOf(s.get("phone")); m.description = String.valueOf(s.get("description")); m.serviceStatus = String.valueOf(s.get("status")); m.pickupLat = asDouble(s.get("pickupLat")); m.pickupLng = asDouble(s.get("pickupLng")); m.destinationLat = asDouble(s.get("destinationLat")); m.destinationLng = asDouble(s.get("destinationLng")); m.acceptedBy = String.valueOf(s.get("acceptedBy")); Object at = s.get("acceptedTaxi"); m.acceptedTaxi = at instanceof Number ? ((Number) at).intValue() : 0; }
         return m;
     }
+
+    private int safeTaxiNumber() { try { return Integer.parseInt(session.getTaxiNumber()); } catch (Exception e) { return 0; } }
+    private double asDouble(Object value) { return value instanceof Number ? ((Number) value).doubleValue() : 0; }
 }
