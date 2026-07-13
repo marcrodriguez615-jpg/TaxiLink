@@ -53,6 +53,17 @@ Flujo real:
 
 También puedes ejecutar el backend Node.js en un ordenador o servidor accesible por todos.
 
+## Reglas seguras Firebase
+
+Las reglas están en `firestore.rules`. Para activarlas:
+
+1. Abre Firebase Console.
+2. Entra en `Firestore Database > Rules`.
+3. Copia el contenido de `firestore.rules`.
+4. Pulsa `Publish`.
+
+La app usa Firebase Auth anónimo automáticamente. Las reglas bloquean usuarios no autenticados y limitan la eliminación de empresa al móvil propietario que creó la central.
+
 1. En el PC/servidor ejecuta:
 
 ```bash
