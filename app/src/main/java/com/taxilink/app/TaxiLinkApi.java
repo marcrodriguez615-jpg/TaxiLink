@@ -47,6 +47,7 @@ public class TaxiLinkApi {
         data.put("ownerPassword", company.ownerPassword);
         data.put("centralNumber", company.centralNumber);
         data.put("ownerUid", auth.getCurrentUser().getUid());
+        data.put("ownerName", company.ownerName);
         data.put("createdAt", System.currentTimeMillis());
         db.collection("companies").document(company.centralNumber).set(data)
                 .addOnSuccessListener(v -> callback.onResult(true, null))
@@ -61,6 +62,8 @@ public class TaxiLinkApi {
                 .addOnSuccessListener(doc -> {
                     if (!doc.exists()) { callback.onResult(null, new Exception("La central no existe")); return; }
                     if (!ownerPassword.equals(doc.getString("ownerPassword"))) { callback.onResult(null, new Exception("Contraseña de propietario incorrecta")); return; }
+                    String ownerName = doc.getString("ownerName");
+                    if (ownerName != null && !ownerName.trim().isEmpty()) session.updateLocalNames(doc.getString("name"), ownerName, null);
                     callback.onResult(doc.getString("name"), null);
                 })
                 .addOnFailureListener(e -> callback.onResult(null, e));
@@ -337,6 +340,19 @@ public class TaxiLinkApi {
             if (error != null) { callback.onResult(null, error); return; }
         db.collection("companies").document(session.getCentralNumber()).delete()
                 .addOnSuccessListener(v -> callback.onResult(true, null)).addOnFailureListener(e -> callback.onResult(null, e));
+        });
+    }
+
+    public void updateCompanyNames(String companyName, String ownerName, Callback<Boolean> callback) {
+        ensureAuth(error -> {
+            if (error != null) { callback.onResult(null, error); return; }
+            Map<String, Object> updates = new HashMap<>();
+            if (companyName != null && !companyName.trim().isEmpty()) updates.put("name", companyName.trim());
+            if (ownerName != null && !ownerName.trim().isEmpty()) updates.put("ownerName", ownerName.trim());
+            if (updates.isEmpty()) { callback.onResult(true, null); return; }
+            db.collection("companies").document(session.getCentralNumber()).update(updates)
+                    .addOnSuccessListener(v -> callback.onResult(true, null))
+                    .addOnFailureListener(e -> callback.onResult(null, e));
         });
     }
 

@@ -18,6 +18,7 @@ public class UserSession {
                 .putString("company_password", company.password)
                 .putString("owner_password", company.ownerPassword)
                 .putString("central_number", company.centralNumber)
+                .putString("owner_name", company.ownerName)
                 .putString("role", "Propietario")
                 .putBoolean("logged_in", true)
                 .apply();
@@ -29,7 +30,8 @@ public class UserSession {
         String pass = prefs.getString("company_password", "123456");
         String ownerPass = prefs.getString("owner_password", pass);
         String central = prefs.getString("central_number", "00000000000000000");
-        return new Company(name, id, pass, ownerPass, central);
+        String ownerName = prefs.getString("owner_name", "Propietario");
+        return new Company(name, id, pass, ownerPass, central, ownerName);
     }
 
     public void saveDriverLogin(String companyId, String taxiNumber, boolean remember) {
@@ -76,6 +78,18 @@ public class UserSession {
 
     public String getDriverName() {
         return prefs.getString("driver_name", "Conductor");
+    }
+
+    public String getDisplayName() {
+        return "Propietario".equals(getRole()) ? getCompany().ownerName : getDriverName();
+    }
+
+    public void updateLocalNames(String companyName, String ownerName, String driverName) {
+        SharedPreferences.Editor editor = prefs.edit();
+        if (companyName != null && !companyName.trim().isEmpty()) editor.putString("company_name", companyName.trim());
+        if (ownerName != null && !ownerName.trim().isEmpty()) editor.putString("owner_name", ownerName.trim());
+        if (driverName != null && !driverName.trim().isEmpty()) editor.putString("driver_name", driverName.trim());
+        editor.apply();
     }
 
     public String getRequestId() {

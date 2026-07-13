@@ -24,7 +24,8 @@ service cloud.firestore {
         && request.resource.data.name is string
         && request.resource.data.identifier is string
         && request.resource.data.password is string
-        && request.resource.data.ownerPassword is string;
+        && request.resource.data.ownerPassword is string
+        && request.resource.data.ownerName is string;
 
       allow read: if signedIn();
       allow update: if isOwner(central);

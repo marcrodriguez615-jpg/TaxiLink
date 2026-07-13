@@ -180,19 +180,20 @@ public class MainActivity extends android.app.Activity {
         intro.setPadding(dp(22), dp(18), dp(22), 0);
         root.addView(intro);
         LinearLayout card = card();
+        EditText ownerName = field("Nombre del propietario", "Ej. Marc Rodríguez", false);
         EditText name = field("Nombre de empresa", "Ej. Taxi Central", false);
         EditText id = field("Identificador", "Ej. central", false);
         EditText pass = field("Contraseña conductores", "Para que los conductores soliciten acceso", true);
         EditText ownerPass = field("Contraseña propietario", "Clave única del dueño", true);
-        card.addView(name); card.addView(id, mt(12)); card.addView(pass, mt(12)); card.addView(ownerPass, mt(12));
+        card.addView(ownerName); card.addView(name, mt(12)); card.addView(id, mt(12)); card.addView(pass, mt(12)); card.addView(ownerPass, mt(12));
         Button submit = button("Crear empresa", TEAL, Color.WHITE);
         submit.setOnClickListener(v -> {
-            if (empty(name) || empty(id) || pass.getText().toString().trim().length() < 6 || ownerPass.getText().toString().trim().length() < 6) {
+            if (empty(ownerName) || empty(name) || empty(id) || pass.getText().toString().trim().length() < 6 || ownerPass.getText().toString().trim().length() < 6) {
                 toast("Completa los campos. Las contraseñas deben tener mínimo 6 caracteres.");
                 return;
             }
             String centralNumber = generateCentralNumber();
-            Company company = new Company(name.getText().toString().trim(), id.getText().toString().trim(), pass.getText().toString().trim(), ownerPass.getText().toString().trim(), centralNumber);
+            Company company = new Company(name.getText().toString().trim(), id.getText().toString().trim(), pass.getText().toString().trim(), ownerPass.getText().toString().trim(), centralNumber, ownerName.getText().toString().trim());
             session.saveCompany(company);
             api.createCompany(company, (ok, error) -> runOnUiThread(() -> {
                 if (error != null) toast("Empresa guardada localmente. Backend no conectado: " + error.getMessage());
@@ -257,7 +258,8 @@ public class MainActivity extends android.app.Activity {
                     return;
                 }
                 Company current = session.getCompany();
-                session.saveCompany(new Company(companyName, company.getText().toString().trim(), current.password, pass.getText().toString().trim(), company.getText().toString().trim()));
+                String ownerDisplay = current.ownerName == null || current.ownerName.equals("Propietario") ? "Propietario" : current.ownerName;
+                session.saveCompany(new Company(companyName, company.getText().toString().trim(), current.password, pass.getText().toString().trim(), company.getText().toString().trim(), ownerDisplay));
                 showOwnerPanel();
             }));
         });
@@ -701,10 +703,11 @@ public class MainActivity extends android.app.Activity {
         LinearLayout root = baseWithHeader("Perfil y configuración", "←", false, null);
         LinearLayout profile = card(); profile.setGravity(Gravity.CENTER_HORIZONTAL);
         profile.addView(circleText(session.getRole().equals("Propietario") ? "👤" : "🚕", TEAL, Color.WHITE, 76));
-        profile.addView(text(session.getRole().equals("Propietario") ? "Propietario" : "Juan Pérez", 22, TEXT, true), wrapMT(12));
+        profile.addView(text(session.getDisplayName(), 22, TEXT, true), wrapMT(12));
         TextView role = text(session.getRole(), 14, SECONDARY, false); role.setGravity(Gravity.CENTER); profile.addView(role);
         root.addView(profile, cardLp());
         root.addView(settingsRow("Permisos de usuarios", "Gestiona roles y accesos", null));
+        root.addView(ownerAction("✏", "Cambiar nombres", "Actualiza nombre visible y empresa", () -> showChangeNamesDialog()));
         root.addView(settingsRow("Notificaciones", "Alertas de flota y conexión", true));
         root.addView(settingsRow("Micrófono (Walkie)", "Comunicación local visual", true));
         root.addView(settingsRow("Ubicación en primer plano", "Mostrar posición actual", true));
@@ -798,6 +801,41 @@ public class MainActivity extends android.app.Activity {
                 toast("Contraseña actualizada");
             } else toast("Mínimo 6 caracteres");
         }).setNegativeButton("Cancelar", null).show();
+    }
+
+    private void showChangeNamesDialog() {
+        LinearLayout box = column();
+        box.setPadding(dp(10), dp(8), dp(10), dp(4));
+        EditText companyName = field("Nombre empresa", session.getCompany().name, false);
+        companyName.setText(session.getCompany().name);
+        EditText ownerName = field("Nombre propietario", session.getCompany().ownerName, false);
+        ownerName.setText(session.getCompany().ownerName);
+        EditText driverName = field("Nombre conductor", session.getDriverName(), false);
+        driverName.setText(session.getDriverName());
+        if ("Propietario".equals(session.getRole())) {
+            box.addView(companyName, matchH(58));
+            box.addView(ownerName, matchHMT(58, 10));
+        } else {
+            box.addView(driverName, matchH(58));
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Cambiar nombres")
+                .setView(box)
+                .setPositiveButton("Guardar", (d, w) -> {
+                    if ("Propietario".equals(session.getRole())) {
+                        session.updateLocalNames(companyName.getText().toString(), ownerName.getText().toString(), null);
+                        api.updateCompanyNames(companyName.getText().toString(), ownerName.getText().toString(), (ok, error) -> runOnUiThread(() -> {
+                            if (error != null) toast("Guardado local. Firebase: " + error.getMessage()); else toast("Nombres actualizados");
+                            showProfileSettingsScreen();
+                        }));
+                    } else {
+                        session.updateLocalNames(null, null, driverName.getText().toString());
+                        toast("Nombre actualizado");
+                        showProfileSettingsScreen();
+                    }
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
     }
 
     private void showHistoryDialog() {
