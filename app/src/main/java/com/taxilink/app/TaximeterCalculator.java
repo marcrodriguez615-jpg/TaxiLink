@@ -18,11 +18,11 @@ public class TaximeterCalculator {
 
     public static class SupplementOptions {
         public boolean airport;
-        public boolean station;
-        public boolean nightHoliday;
-        public boolean luggage;
-        public boolean pet;
-        public boolean booking;
+        public boolean mollAdossat;
+        public boolean firaGranVia;
+        public boolean santsStation;
+        public boolean largeCapacity;
+        public boolean specialNight;
     }
 
     public static FareResult estimate(String tariffName, double distanceKm, int minutes, SupplementOptions supplements) {
@@ -34,7 +34,9 @@ public class TaximeterCalculator {
         r.distanceFare = r.distanceKm * tariff.pricePerKm;
         r.timeFare = r.minutes * tariff.pricePerMinute;
         r.minimumFare = tariff.minimumFare;
-        r.supplements = supplementTotal(supplements, r.lines);
+        boolean fixedAirportPort = tariff.name.contains("Tarifa 4");
+        r.supplements = fixedAirportPort ? 0 : supplementTotal(supplements, r.lines);
+        if (fixedAirportPort) r.lines.add("T-4: precio fijo con suplementos incluidos");
         double raw = Math.max(r.minimumFare, r.baseFare + r.distanceFare + r.timeFare) + r.supplements;
         r.total = roundUpToFiveCents(raw);
         r.lines.add("Tarifa: " + tariff.name);
@@ -53,12 +55,12 @@ public class TaximeterCalculator {
     private static double supplementTotal(SupplementOptions o, List<String> lines) {
         double total = 0;
         if (o == null) return 0;
-        if (o.airport) { total += 4.50; lines.add("Suplemento aeropuerto: 4.50 €"); }
-        if (o.station) { total += 2.50; lines.add("Suplemento estación/puerto/feria: 2.50 €"); }
-        if (o.nightHoliday) { total += 3.10; lines.add("Suplemento noche/festivo: 3.10 €"); }
-        if (o.luggage) { total += 1.00; lines.add("Suplemento equipaje especial: 1.00 €"); }
-        if (o.pet) { total += 1.50; lines.add("Suplemento mascota: 1.50 €"); }
-        if (o.booking) { total += 3.40; lines.add("Suplemento emisora/reserva: 3.40 €"); }
+        if (o.airport) { total += 4.60; lines.add("Suplemento aeropuerto: 4.60 €"); }
+        if (o.mollAdossat) { total += 4.60; lines.add("Suplemento Moll Adossat: 4.60 €"); }
+        if (o.firaGranVia) { total += 3.30; lines.add("Suplemento Fira Gran Via: 3.30 €"); }
+        if (o.santsStation) { total += 2.55; lines.add("Suplemento Estación de Sants: 2.55 €"); }
+        if (o.largeCapacity) { total += 4.60; lines.add("Suplemento vehículo 5-8 pasajeros: 4.60 €"); }
+        if (o.specialNight) { total += 4.60; lines.add("Suplemento noche especial: 4.60 €"); }
         return total;
     }
 
@@ -69,14 +71,15 @@ public class TaximeterCalculator {
     private static Tariff tariffFor(String name) {
         if (name == null) return tariff1();
         String n = name.toLowerCase(java.util.Locale.ROOT);
-        if (n.contains("2")) return new Tariff("Tarifa 2", 2.55, 1.55, 0.41, 7.50);
-        if (n.contains("3")) return new Tariff("Tarifa 3", 3.10, 1.80, 0.48, 8.50);
-        if (n.contains("aeropuerto")) return new Tariff("Tarifa aeropuerto", 3.10, 1.80, 0.48, 21.00);
+        if (n.contains("2")) return new Tariff("Tarifa 2 AMB 2026", 2.80, 1.66, 27.75 / 60.0, 0);
+        if (n.contains("3")) return new Tariff("Tarifa 3 precio cerrado AMB 2026", 2.80, 1.35, 27.75 / 60.0, 8.00);
+        if (n.contains("aeropuerto")) return new Tariff("Tarifa aeropuerto AMB 2026", 2.80, 1.66, 27.75 / 60.0, 21.00);
+        if (n.contains("4")) return new Tariff("Tarifa 4 Aeropuerto - Moll Adossat AMB 2026", 46.00, 0, 0, 46.00);
         return tariff1();
     }
 
     private static Tariff tariff1() {
-        return new Tariff("Tarifa 1", 2.40, 1.35, 0.35, 7.00);
+        return new Tariff("Tarifa 1 AMB 2026", 2.80, 1.35, 27.75 / 60.0, 0);
     }
 
     private static class Tariff {

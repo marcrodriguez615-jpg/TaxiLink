@@ -612,7 +612,7 @@ public class MainActivity extends android.app.Activity {
         Spinner serviceType = spinner(new String[]{"Taxi urbano", "Taxi aeropuerto", "Taxi adaptado", "Servicio empresa"});
         card.addView(serviceType, matchHMT(58, 8));
         card.addView(text("Tarifa de Cataluña", 15, NAVY, true), wrapMT(18));
-        Spinner tariff = spinner(new String[]{"Tarifa 1", "Tarifa 2", "Tarifa 3", "Tarifa aeropuerto"});
+        Spinner tariff = spinner(new String[]{"Tarifa 1", "Tarifa 2", "Tarifa 3", "Tarifa 4 Aeropuerto - Moll Adossat"});
         card.addView(tariff, matchHMT(58, 8));
         card.addView(text("Recoger al cliente en", 15, NAVY, true), wrapMT(18));
         EditText pickupStreet = field("Calle de recogida", "Ej. Carrer de Mallorca 401", false);
@@ -636,12 +636,12 @@ public class MainActivity extends android.app.Activity {
         card.addView(price, matchHMT(58, 8));
         card.addView(text("Suplementos", 15, NAVY, true), wrapMT(14));
         CheckBox suppAirport = checkbox("Aeropuerto");
-        CheckBox suppStation = checkbox("Estación / puerto / feria");
-        CheckBox suppNight = checkbox("Noche o festivo");
-        CheckBox suppLuggage = checkbox("Equipaje especial");
-        CheckBox suppPet = checkbox("Mascota");
-        CheckBox suppBooking = checkbox("Reserva / emisora");
-        card.addView(suppAirport); card.addView(suppStation); card.addView(suppNight); card.addView(suppLuggage); card.addView(suppPet); card.addView(suppBooking);
+        CheckBox suppMoll = checkbox("Estación marítima Moll Adossat");
+        CheckBox suppFira = checkbox("Fira Barcelona Gran Via");
+        CheckBox suppSants = checkbox("Estación de Sants");
+        CheckBox suppLarge = checkbox("Vehículo ocupado por 5-8 pasajeros");
+        CheckBox suppSpecialNight = checkbox("Noche especial San Juan / Navidad / Fin de año");
+        card.addView(suppAirport); card.addView(suppMoll); card.addView(suppFira); card.addView(suppSants); card.addView(suppLarge); card.addView(suppSpecialNight);
         TextView estimateDetails = text("Aproximación pendiente de calcular", 14, SECONDARY, false);
         estimateDetails.setPadding(dp(8), dp(10), dp(8), dp(4));
         card.addView(estimateDetails);
@@ -668,7 +668,7 @@ public class MainActivity extends android.app.Activity {
             String destinationAddress = smartAddress(destinationStreet.getText().toString().trim(), destinationCity.getText().toString().trim());
             double[] pickupPoint = geocodeAddress(pickupAddress);
             double[] destinationPoint = geocodeAddress(destinationAddress);
-            TaximeterCalculator.FareResult fare = calculateFare(tariff.getSelectedItem().toString(), pickupPoint, destinationPoint, suppAirport, suppStation, suppNight, suppLuggage, suppPet, suppBooking);
+            TaximeterCalculator.FareResult fare = calculateFare(tariff.getSelectedItem().toString(), pickupPoint, destinationPoint, suppAirport, suppMoll, suppFira, suppSants, suppLarge, suppSpecialNight);
             if (!fixed.isChecked()) price.setText(String.format(Locale.getDefault(), "%.2f", fare.total));
             if (pickupPoint[0] == 0 || destinationPoint[0] == 0) toast("Aviso: una dirección no se detectó bien. Se enviará igualmente.");
             api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickupAddress, destinationAddress, fixed.isChecked(), price.getText().toString().trim(), phone.getText().toString().trim(), description.getText().toString().trim(), pickupPoint[0], pickupPoint[1], destinationPoint[0], destinationPoint[1], (ok, error) -> runOnUiThread(() -> {
@@ -686,7 +686,7 @@ public class MainActivity extends android.app.Activity {
             String destinationAddress = smartAddress(destinationStreet.getText().toString().trim(), destinationCity.getText().toString().trim());
             double[] pickupPoint = geocodeAddress(pickupAddress);
             double[] destinationPoint = geocodeAddress(destinationAddress);
-            TaximeterCalculator.FareResult fare = calculateFare(tariff.getSelectedItem().toString(), pickupPoint, destinationPoint, suppAirport, suppStation, suppNight, suppLuggage, suppPet, suppBooking);
+            TaximeterCalculator.FareResult fare = calculateFare(tariff.getSelectedItem().toString(), pickupPoint, destinationPoint, suppAirport, suppMoll, suppFira, suppSants, suppLarge, suppSpecialNight);
             fixed.setChecked(true);
             price.setText(String.format(Locale.getDefault(), "%.2f", fare.total));
             estimateDetails.setText(joinFareLines(fare));
@@ -1104,7 +1104,7 @@ public class MainActivity extends android.app.Activity {
         return v;
     }
 
-    private TaximeterCalculator.FareResult calculateFare(String tariff, double[] pickup, double[] destination, CheckBox airport, CheckBox station, CheckBox night, CheckBox luggage, CheckBox pet, CheckBox booking) {
+    private TaximeterCalculator.FareResult calculateFare(String tariff, double[] pickup, double[] destination, CheckBox airport, CheckBox moll, CheckBox fira, CheckBox sants, CheckBox large, CheckBox specialNight) {
         double km = 0;
         if (pickup[0] != 0 && destination[0] != 0) {
             float[] result = new float[1];
@@ -1114,11 +1114,11 @@ public class MainActivity extends android.app.Activity {
         int minutes = (int) Math.ceil((km / 24.0) * 60.0 + 4.0);
         TaximeterCalculator.SupplementOptions options = new TaximeterCalculator.SupplementOptions();
         options.airport = airport.isChecked();
-        options.station = station.isChecked();
-        options.nightHoliday = night.isChecked();
-        options.luggage = luggage.isChecked();
-        options.pet = pet.isChecked();
-        options.booking = booking.isChecked();
+        options.mollAdossat = moll.isChecked();
+        options.firaGranVia = fira.isChecked();
+        options.santsStation = sants.isChecked();
+        options.largeCapacity = large.isChecked();
+        options.specialNight = specialNight.isChecked();
         return TaximeterCalculator.estimate(tariff, km, minutes, options);
     }
 
