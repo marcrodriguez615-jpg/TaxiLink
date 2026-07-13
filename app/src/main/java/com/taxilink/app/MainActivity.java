@@ -634,6 +634,17 @@ public class MainActivity extends android.app.Activity {
         price.setVisibility(View.GONE);
         fixed.setOnCheckedChangeListener((buttonView, isChecked) -> price.setVisibility(isChecked ? View.VISIBLE : View.GONE));
         card.addView(price, matchHMT(58, 8));
+        card.addView(text("Suplementos", 15, NAVY, true), wrapMT(14));
+        CheckBox suppAirport = checkbox("Aeropuerto");
+        CheckBox suppStation = checkbox("Estación / puerto / feria");
+        CheckBox suppNight = checkbox("Noche o festivo");
+        CheckBox suppLuggage = checkbox("Equipaje especial");
+        CheckBox suppPet = checkbox("Mascota");
+        CheckBox suppBooking = checkbox("Reserva / emisora");
+        card.addView(suppAirport); card.addView(suppStation); card.addView(suppNight); card.addView(suppLuggage); card.addView(suppPet); card.addView(suppBooking);
+        TextView estimateDetails = text("Aproximación pendiente de calcular", 14, SECONDARY, false);
+        estimateDetails.setPadding(dp(8), dp(10), dp(8), dp(4));
+        card.addView(estimateDetails);
         Button datos = button("Datos", Color.WHITE, TEAL);
         datos.setBackground(round(Color.WHITE, 16, 1, TEAL));
         card.addView(datos, matchHMT(52, 12));
@@ -657,6 +668,8 @@ public class MainActivity extends android.app.Activity {
             String destinationAddress = smartAddress(destinationStreet.getText().toString().trim(), destinationCity.getText().toString().trim());
             double[] pickupPoint = geocodeAddress(pickupAddress);
             double[] destinationPoint = geocodeAddress(destinationAddress);
+            TaximeterCalculator.FareResult fare = calculateFare(tariff.getSelectedItem().toString(), pickupPoint, destinationPoint, suppAirport, suppStation, suppNight, suppLuggage, suppPet, suppBooking);
+            if (!fixed.isChecked()) price.setText(String.format(Locale.getDefault(), "%.2f", fare.total));
             if (pickupPoint[0] == 0 || destinationPoint[0] == 0) toast("Aviso: una dirección no se detectó bien. Se enviará igualmente.");
             api.sendService(serviceType.getSelectedItem().toString(), tariff.getSelectedItem().toString(), pickupAddress, destinationAddress, fixed.isChecked(), price.getText().toString().trim(), phone.getText().toString().trim(), description.getText().toString().trim(), pickupPoint[0], pickupPoint[1], destinationPoint[0], destinationPoint[1], (ok, error) -> runOnUiThread(() -> {
                 send.setEnabled(true);
@@ -668,9 +681,16 @@ public class MainActivity extends android.app.Activity {
         Button calc = button("Calcular", Color.WHITE, TEAL);
         calc.setBackground(round(Color.WHITE, 16, 1, TEAL));
         calc.setOnClickListener(v -> {
-            if (!fixed.isChecked()) fixed.setChecked(true);
-            if (price.getText().toString().trim().isEmpty()) price.setText("25");
-            toast("Precio estimado calculado");
+            if (empty(pickupStreet) || empty(pickupCity) || empty(destinationStreet) || empty(destinationCity)) { toast("Indica calle y ciudad para calcular"); return; }
+            String pickupAddress = smartAddress(pickupStreet.getText().toString().trim(), pickupCity.getText().toString().trim());
+            String destinationAddress = smartAddress(destinationStreet.getText().toString().trim(), destinationCity.getText().toString().trim());
+            double[] pickupPoint = geocodeAddress(pickupAddress);
+            double[] destinationPoint = geocodeAddress(destinationAddress);
+            TaximeterCalculator.FareResult fare = calculateFare(tariff.getSelectedItem().toString(), pickupPoint, destinationPoint, suppAirport, suppStation, suppNight, suppLuggage, suppPet, suppBooking);
+            fixed.setChecked(true);
+            price.setText(String.format(Locale.getDefault(), "%.2f", fare.total));
+            estimateDetails.setText(joinFareLines(fare));
+            toast("Aproximación calculada al alza");
         });
         card.addView(calc, matchHMT(58, 12));
         root.addView(card, cardLp());
@@ -689,6 +709,7 @@ public class MainActivity extends android.app.Activity {
         root.addView(settingsRow("Micrófono (Walkie)", "Comunicación local visual", true));
         root.addView(settingsRow("Ubicación en primer plano", "Mostrar posición actual", true));
         root.addView(settingsRow("Ubicación en segundo plano", "Preparado para servicio futuro", false));
+        root.addView(androidAutoSettingsRow());
         Button logout = button("Cerrar sesión", DANGER, Color.WHITE);
         logout.setOnClickListener(v -> { session.logout(); showStartScreen(); });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)); lp.setMargins(dp(20), dp(18), dp(20), dp(100));
@@ -742,6 +763,19 @@ public class MainActivity extends android.app.Activity {
         LinearLayout row = ownerAction("⚙", title, desc, () -> toast("Configuración local"));
         row.removeViewAt(row.getChildCount() - 1);
         if (checked != null) { Switch sw = new Switch(this); sw.setChecked(checked); row.addView(sw); }
+        return row;
+    }
+
+    private LinearLayout androidAutoSettingsRow() {
+        LinearLayout row = ownerAction("🚘", "Taxímetro en Android Auto", "Mostrar taxímetro y estado en la pantalla del coche", () -> {});
+        row.removeViewAt(row.getChildCount() - 1);
+        Switch sw = new Switch(this);
+        sw.setChecked(session.isAndroidAutoTaximeterEnabled());
+        sw.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            session.setAndroidAutoTaximeterEnabled(isChecked);
+            toast(isChecked ? "Android Auto activado" : "Android Auto desactivado");
+        });
+        row.addView(sw);
         return row;
     }
 
@@ -1070,6 +1104,30 @@ public class MainActivity extends android.app.Activity {
         return v;
     }
 
+    private TaximeterCalculator.FareResult calculateFare(String tariff, double[] pickup, double[] destination, CheckBox airport, CheckBox station, CheckBox night, CheckBox luggage, CheckBox pet, CheckBox booking) {
+        double km = 0;
+        if (pickup[0] != 0 && destination[0] != 0) {
+            float[] result = new float[1];
+            Location.distanceBetween(pickup[0], pickup[1], destination[0], destination[1], result);
+            km = Math.max(0.8, (result[0] / 1000.0) * 1.18);
+        }
+        int minutes = (int) Math.ceil((km / 24.0) * 60.0 + 4.0);
+        TaximeterCalculator.SupplementOptions options = new TaximeterCalculator.SupplementOptions();
+        options.airport = airport.isChecked();
+        options.station = station.isChecked();
+        options.nightHoliday = night.isChecked();
+        options.luggage = luggage.isChecked();
+        options.pet = pet.isChecked();
+        options.booking = booking.isChecked();
+        return TaximeterCalculator.estimate(tariff, km, minutes, options);
+    }
+
+    private String joinFareLines(TaximeterCalculator.FareResult fare) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : fare.lines) sb.append(line).append("\n");
+        return sb.toString().trim();
+    }
+
     private View taxiIllustration() {
         FrameLayout f = new FrameLayout(this); f.setPadding(0, dp(26), 0, dp(10));
         TextView road = text("━━━━━━━", 50, Color.WHITE, true); road.setAlpha(.18f); road.setGravity(Gravity.CENTER); f.addView(road, match());
@@ -1086,6 +1144,7 @@ public class MainActivity extends android.app.Activity {
     private TextView text(String s, int sp, int color, boolean bold) { TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t; }
     private TextView circleText(String s, int bg, int color, int size) { TextView t = text(s, size > 60 ? 28 : 20, color, true); t.setGravity(Gravity.CENTER); t.setBackground(round(bg, size / 2, 0, bg)); t.setLayoutParams(new LinearLayout.LayoutParams(dp(size), dp(size))); return t; }
     private EditText field(String label, String hint, boolean password) { EditText e = new EditText(this); e.setHint(hint); e.setTextColor(TEXT); e.setHintTextColor(SECONDARY); e.setTextSize(15); e.setSingleLine(true); e.setBackgroundResource(R.drawable.bg_field); e.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_CLASS_TEXT); return e; }
+    private CheckBox checkbox(String label) { CheckBox c = new CheckBox(this); c.setText(label); c.setTextColor(TEXT); c.setTextSize(14); return c; }
     private Spinner spinner(String[] values) { Spinner s = new Spinner(this); ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values); adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); s.setAdapter(adapter); s.setBackgroundResource(R.drawable.bg_field); return s; }
     private Button button(String s, int bg, int color) { Button b = new Button(this); b.setText(s); b.setTextColor(color); b.setTextSize(16); b.setTypeface(Typeface.DEFAULT, Typeface.BOLD); b.setAllCaps(false); b.setBackground(round(bg, 18, 0, bg)); return b; }
     private Button roundSmallButton(String s, int bg, int color) { Button b = button(s, bg, color); b.setTextSize(20); b.setLayoutParams(new LinearLayout.LayoutParams(dp(58), dp(58))); return b; }

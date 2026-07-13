@@ -110,6 +110,14 @@ public class UserSession {
         prefs.edit().putString("owner_password", password).apply();
     }
 
+    public boolean isAndroidAutoTaximeterEnabled() {
+        return prefs.getBoolean("android_auto_taximeter", true);
+    }
+
+    public void setAndroidAutoTaximeterEnabled(boolean enabled) {
+        prefs.edit().putBoolean("android_auto_taximeter", enabled).apply();
+    }
+
     public void logout() {
         prefs.edit().putString("role", "").putBoolean("logged_in", false).putBoolean("driver_approved", false).remove("taxi_number").remove("request_id").apply();
     }
