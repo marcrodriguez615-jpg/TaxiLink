@@ -15,10 +15,11 @@ public class UserSession {
         prefs.edit()
                 .putString("company_name", company.name)
                 .putString("company_id", company.identifier)
-                .putString("company_password", company.password)
-                .putString("owner_password", company.ownerPassword)
+                .putString("owner_email", company.ownerEmail == null ? "" : company.ownerEmail)
                 .putString("central_number", company.centralNumber)
                 .putString("owner_name", company.ownerName)
+                .putString("service_towns", company.serviceTowns)
+                .putString("tariff_profile", company.tariffProfile)
                 .putString("role", "Propietario")
                 .putBoolean("logged_in", true)
                 .apply();
@@ -27,11 +28,15 @@ public class UserSession {
     public Company getCompany() {
         String name = prefs.getString("company_name", "Taxi Central");
         String id = prefs.getString("company_id", "central");
-        String pass = prefs.getString("company_password", "123456");
-        String ownerPass = prefs.getString("owner_password", pass);
+        String pass = "";
+        String ownerPass = "";
         String central = prefs.getString("central_number", "00000000000000000");
         String ownerName = prefs.getString("owner_name", "Propietario");
-        return new Company(name, id, pass, ownerPass, central, ownerName);
+        String towns = prefs.getString("service_towns", "");
+        String tariffProfile = prefs.getString("tariff_profile", "AMB 2026");
+        Company company = new Company(name, id, pass, ownerPass, central, ownerName, towns, tariffProfile);
+        company.ownerEmail = prefs.getString("owner_email", "");
+        return company;
     }
 
     public void saveDriverLogin(String companyId, String taxiNumber, boolean remember) {
@@ -41,7 +46,8 @@ public class UserSession {
                 .putString("taxi_number", taxiNumber)
                 .putString("role", "Conductor")
                 .putBoolean("logged_in", true)
-                .putBoolean("driver_approved", false);
+                .putBoolean("driver_approved", false)
+                .remove("assigned_reservation_color");
         if (remember) {
             editor.putString("remember_company", companyId).putString("remember_taxi", taxiNumber);
         }
@@ -92,6 +98,13 @@ public class UserSession {
         editor.apply();
     }
 
+    public void updateTariffSettings(String serviceTowns, String tariffProfile) {
+        SharedPreferences.Editor editor = prefs.edit();
+        if (serviceTowns != null) editor.putString("service_towns", serviceTowns.trim());
+        if (tariffProfile != null) editor.putString("tariff_profile", tariffProfile.trim());
+        editor.apply();
+    }
+
     public String getRequestId() {
         return prefs.getString("request_id", "");
     }
@@ -117,11 +130,11 @@ public class UserSession {
     }
 
     public void changePassword(String password) {
-        prefs.edit().putString("company_password", password).apply();
+        // Driver access is approved by the owner and no longer uses a shared password.
     }
 
     public void changeOwnerPassword(String password) {
-        prefs.edit().putString("owner_password", password).apply();
+        // Firebase Authentication owns the password; this is intentionally not persisted.
     }
 
     public boolean isAndroidAutoTaximeterEnabled() {
@@ -132,7 +145,91 @@ public class UserSession {
         prefs.edit().putBoolean("android_auto_taximeter", enabled).apply();
     }
 
+    public boolean isAdminCountsAsTaxi() {
+        return prefs.getBoolean("admin_counts_as_taxi", false);
+    }
+
+    public void setAdminCountsAsTaxi(boolean enabled) {
+        prefs.edit().putBoolean("admin_counts_as_taxi", enabled).apply();
+    }
+
+    public String getAdminTaxiNumber() {
+        return prefs.getString("admin_taxi_number", "");
+    }
+
+    public void setAdminTaxiNumber(String taxiNumber) {
+        prefs.edit().putString("admin_taxi_number", taxiNumber == null ? "" : taxiNumber.trim()).apply();
+    }
+
+    public String getAssignedReservationColor() {
+        return prefs.getString("assigned_reservation_color", "");
+    }
+
+    public void setAssignedReservationColor(String color) {
+        prefs.edit().putString("assigned_reservation_color", color == null ? "" : color.trim()).apply();
+    }
+
+    public void startCarTaximeterFromMobileService(String serviceId) {
+        prefs.edit()
+                .putBoolean("car_taximeter_mobile_service_running", true)
+                .putLong("car_taximeter_mobile_service_started_at", System.currentTimeMillis())
+                .putString("car_taximeter_mobile_service_id", serviceId == null ? "" : serviceId)
+                .apply();
+    }
+
+    public void stopCarTaximeterFromMobileService() {
+        prefs.edit()
+                .putBoolean("car_taximeter_mobile_service_running", false)
+                .putLong("car_taximeter_mobile_service_started_at", 0)
+                .remove("car_taximeter_mobile_service_id")
+                .apply();
+    }
+
+    public boolean isMobileServiceTaximeterRunning() {
+        return prefs.getBoolean("car_taximeter_mobile_service_running", false);
+    }
+
+    public long getMobileServiceTaximeterStartedAt() {
+        return prefs.getLong("car_taximeter_mobile_service_started_at", 0);
+    }
+
+    public String getMobileServiceTaximeterId() {
+        return prefs.getString("car_taximeter_mobile_service_id", "");
+    }
+
+    public String getGoogleAdsAccount() {
+        return prefs.getString("google_ads_account", "");
+    }
+
+    public void setGoogleAdsAccount(String account) {
+        prefs.edit().putString("google_ads_account", account == null ? "" : account.trim()).apply();
+    }
+
+    public int getGoogleAdsClicks() {
+        return prefs.getInt("google_ads_clicks", 0);
+    }
+
+    public int getGoogleAdsCalls() {
+        return prefs.getInt("google_ads_calls", 0);
+    }
+
+    public void addGoogleAdsClick() {
+        prefs.edit().putInt("google_ads_clicks", getGoogleAdsClicks() + 1).apply();
+    }
+
+    public void addGoogleAdsCall() {
+        prefs.edit().putInt("google_ads_calls", getGoogleAdsCalls() + 1).apply();
+    }
+
+    public void resetGoogleAdsStats() {
+        prefs.edit().putInt("google_ads_clicks", 0).putInt("google_ads_calls", 0).apply();
+    }
+
+    public void setGoogleAdsStats(int clicks, int calls) {
+        prefs.edit().putInt("google_ads_clicks", Math.max(0, clicks)).putInt("google_ads_calls", Math.max(0, calls)).apply();
+    }
+
     public void logout() {
-        prefs.edit().putString("role", "").putBoolean("logged_in", false).putBoolean("driver_approved", false).remove("taxi_number").remove("request_id").apply();
+        prefs.edit().putString("role", "").putBoolean("logged_in", false).putBoolean("driver_approved", false).remove("taxi_number").remove("request_id").remove("assigned_reservation_color").apply();
     }
 }
