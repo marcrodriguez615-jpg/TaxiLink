@@ -65,7 +65,8 @@ app.get('/health', (req, res) => res.json({ ok: true, service: 'TaxiLink backend
 function baseUrl(req) {
   const configuredUrl = process.env.PUBLIC_BASE_URL;
   if (configuredUrl && /^https?:\/\//.test(configuredUrl)) return configuredUrl;
-  return `${req.protocol}://${req.get('host')}`;
+  const protocol = (req.get('x-forwarded-proto') || req.protocol).split(',')[0].trim();
+  return `${protocol}://${req.get('host')}`;
 }
 
 function requiredGoogleAdsEnv() {
